@@ -3,7 +3,7 @@ module.exports = {
     {
       name: "staff-site",
       cwd: __dirname,
-      script: "site/server.js",
+      script: "server.js",
       env: {
         NODE_ENV: "production",
         PORT: 4101
