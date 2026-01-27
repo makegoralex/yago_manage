@@ -1,4 +1,4 @@
-Система управления розницей1
+Система управления розницей
 
 # STAFF (Site + Telegram Bot) — staff.yago-app.ru
 
