@@ -6,7 +6,7 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ ok: true }));
   }
   res.writeHead(200);
-  res.end("staff alive");
+  res.end("staff alivev2");
 });
 
 const PORT = process.env.PORT || 4101;
