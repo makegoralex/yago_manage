@@ -1,0 +1,78 @@
+name: Deploy STAFF to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Нужны sshpass и rsync
+      - name: Install sshpass and rsync
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass rsync
+
+      # Загружаем исходники staff на сервер
+      # ВАЖНО: не используем pm2 stop all / delete all
+      - name: Upload staff project (rsync)
+        run: |
+          set -euo pipefail
+
+          REMOTE="${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}"
+          REMOTE_DIR="${{ secrets.APP_DIR }}"
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p ${{ secrets.SSH_PORT }}"
+
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" \
+            rsync -az --delete \
+            -e "$SSH_CMD" \
+            --exclude ".git" \
+            --exclude "node_modules" \
+            "$GITHUB_WORKSPACE/" \
+            "$REMOTE:$(printf '%q' "$REMOTE_DIR")/"
+
+      # На сервере: install/build/restart только этого приложения
+      - name: Install/Build/Restart PM2 (staff only)
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            set -e
+            cd "${{ secrets.APP_DIR }}"
+
+            # Маркер версии, чтобы ты ВСЕГДА видел, что обновилось
+            echo "${{ github.sha }} $(date -u +%Y-%m-%dT%H:%M:%SZ)" > version.txt
+
+            # зависимости
+            if [ -f package-lock.json ]; then
+              npm ci --legacy-peer-deps
+            else
+              npm install --legacy-peer-deps
+            fi
+
+            # build если есть
+            npm run build --if-present
+
+            # Запуск: сначала пробуем npm start, иначе оставим как есть и ты скажешь мне
+            if node -e "const p=require('./package.json'); process.exit(p.scripts&&p.scripts.start?0:1)"; then
+              if pm2 describe "${{ secrets.PM2_APP_NAME }}" >/dev/null 2>&1; then
+                PORT="${{ secrets.PORT }}" pm2 restart "${{ secrets.PM2_APP_NAME }}" --update-env
+              else
+                PORT="${{ secrets.PORT }}" pm2 start npm --name "${{ secrets.PM2_APP_NAME }}" -- run start
+              fi
+            else
+              echo "В package.json нет scripts.start. Пришли scripts — я дам точную команду PM2."
+              exit 1
+            fi
+
+            pm2 save
+            pm2 status "${{ secrets.PM2_APP_NAME }}"
