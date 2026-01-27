@@ -1,8 +1,8 @@
 {
-  "name": "yago-staff",
-  "version": "1.0.0",
+  "name": "staff-monorepo",
   "private": true,
   "scripts": {
-    "start": "node server.js"
+    "build": "echo build step (later)",
+    "pm2:reload": "pm2 startOrReload ecosystem.config.js --env production"
   }
 }
