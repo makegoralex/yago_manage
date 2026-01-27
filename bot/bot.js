@@ -131,25 +131,16 @@ bot.on("message", (msg) => {
   }
 
   if (text === "Вход") {
-    const owner = findOwnerByTelegramId(data, telegramId);
-    if (owner) {
-      const company = data.companies.find((item) => item.id === owner.companyId);
-      const companyName = company ? company.name : "(не найдена)";
-      const inviteCode = company ? company.inviteCode : "—";
-      bot.sendMessage(
-        chatId,
-        `Данные для входа:\nЛогин: ${owner.login}\nПароль: ${owner.password}\nКомпания: ${companyName}\nИнвайт-код: ${inviteCode}`
-      );
-      return;
-    }
-
     const employee = findEmployeeByTelegramId(data, telegramId);
     if (employee) {
       sendEmployeeMenu(chatId);
       return;
     }
 
-    bot.sendMessage(chatId, "Аккаунт не найден. Пожалуйста, зарегистрируйтесь.");
+    session.role = "login";
+    session.step = "login";
+    session.data = {};
+    bot.sendMessage(chatId, "Введите логин владельца:");
     return;
   }
 
@@ -194,6 +185,40 @@ bot.on("message", (msg) => {
       bot.sendMessage(
         chatId,
         `Регистрация завершена!\nИнвайт-код: ${company.inviteCode}\nЛогин: ${session.data.login}`
+      );
+      resetSession(telegramId);
+      return;
+    }
+  }
+
+  if (session.role === "login") {
+    if (session.step === "login") {
+      session.data.login = text;
+      session.step = "password";
+      bot.sendMessage(chatId, "Введите пароль:");
+      return;
+    }
+
+    if (session.step === "password") {
+      session.data.password = text;
+      const owner = data.owners.find(
+        (item) =>
+          item.login === session.data.login &&
+          item.password === session.data.password
+      );
+
+      if (!owner) {
+        bot.sendMessage(chatId, "Неверный логин или пароль.");
+        resetSession(telegramId);
+        return;
+      }
+
+      const company = data.companies.find((item) => item.id === owner.companyId);
+      const companyName = company ? company.name : "(не найдена)";
+      const inviteCode = company ? company.inviteCode : "—";
+      bot.sendMessage(
+        chatId,
+        `Вход выполнен!\nКомпания: ${companyName}\nИнвайт-код: ${inviteCode}`
       );
       resetSession(telegramId);
       return;
