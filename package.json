@@ -1,8 +1,8 @@
 {
   "name": "staff-monorepo",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "echo build step (later)",
-    "pm2:reload": "pm2 startOrReload ecosystem.config.js --env production"
+    "build": "echo \"no build yet\""
   }
 }
