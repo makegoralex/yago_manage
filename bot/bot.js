@@ -20,7 +20,7 @@ const MAIN_MENU = {
 
 const ROLE_MENU = {
   reply_markup: {
-    keyboard: [["Я владелец", "Я сотрудник"]],
+    keyboard: [["Я владелец", "Я сотрудник"], ["Вход"]],
     resize_keyboard: true,
     one_time_keyboard: true,
   },
@@ -61,27 +61,12 @@ const sendEmployeeMenu = (chatId) => {
 
 bot.onText(/\/start/, (msg) => {
   const telegramId = msg.from.id;
-  const data = readData();
-  const owner = findOwnerByTelegramId(data, telegramId);
-  if (owner) {
-    const company = data.companies.find((item) => item.id === owner.companyId);
-    const companyName = company ? company.name : "(не найдена)";
-    const inviteCode = company ? company.inviteCode : "—";
-    bot.sendMessage(
-      msg.chat.id,
-      `Вы уже зарегистрированы как владелец.\nКомпания: ${companyName}\nИнвайт-код: ${inviteCode}`
-    );
-    return;
-  }
-
-  const employee = findEmployeeByTelegramId(data, telegramId);
-  if (employee) {
-    sendEmployeeMenu(msg.chat.id);
-    return;
-  }
-
   resetSession(telegramId);
-  bot.sendMessage(msg.chat.id, "Кто вы?", ROLE_MENU);
+  bot.sendMessage(
+    msg.chat.id,
+    "Добро пожаловать! Выберите регистрацию или вход:",
+    ROLE_MENU
+  );
 });
 
 bot.on("message", (msg) => {
@@ -142,6 +127,29 @@ bot.on("message", (msg) => {
     session.step = "invite";
     session.data = {};
     bot.sendMessage(chatId, "Введите инвайт-код компании:");
+    return;
+  }
+
+  if (text === "Вход") {
+    const owner = findOwnerByTelegramId(data, telegramId);
+    if (owner) {
+      const company = data.companies.find((item) => item.id === owner.companyId);
+      const companyName = company ? company.name : "(не найдена)";
+      const inviteCode = company ? company.inviteCode : "—";
+      bot.sendMessage(
+        chatId,
+        `Данные для входа:\nЛогин: ${owner.login}\nПароль: ${owner.password}\nКомпания: ${companyName}\nИнвайт-код: ${inviteCode}`
+      );
+      return;
+    }
+
+    const employee = findEmployeeByTelegramId(data, telegramId);
+    if (employee) {
+      sendEmployeeMenu(chatId);
+      return;
+    }
+
+    bot.sendMessage(chatId, "Аккаунт не найден. Пожалуйста, зарегистрируйтесь.");
     return;
   }
 
