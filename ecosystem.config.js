@@ -3,10 +3,11 @@ module.exports = {
     {
       name: "staff-site",
       cwd: __dirname,
-      script: "server.js",
+      script: "site/server.js",
       env: {
         NODE_ENV: "production",
-        PORT: 4101
+        PORT: 4101,
+        DATA_DIR: "/var/lib/staff.yago-app"
       }
     },
     {
@@ -14,7 +15,8 @@ module.exports = {
       cwd: __dirname,
       script: "bot/bot.js",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        DATA_DIR: "/var/lib/staff.yago-app"
       }
     }
   ]
