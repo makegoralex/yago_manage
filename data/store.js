@@ -1,7 +1,17 @@
 const fs = require("fs");
 const path = require("path");
 
-const DB_PATH = path.join(__dirname, "db.json");
+const resolveDbPath = () => {
+  if (process.env.DB_PATH) {
+    return process.env.DB_PATH;
+  }
+  if (process.env.DATA_DIR) {
+    return path.join(process.env.DATA_DIR, "db.json");
+  }
+  return path.join(__dirname, "db.json");
+};
+
+const DB_PATH = resolveDbPath();
 
 const emptyData = {
   owners: [],
@@ -10,6 +20,11 @@ const emptyData = {
 };
 
 const ensureDatabase = () => {
+  const dir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
   if (!fs.existsSync(DB_PATH)) {
     fs.writeFileSync(DB_PATH, JSON.stringify(emptyData, null, 2));
     return;
