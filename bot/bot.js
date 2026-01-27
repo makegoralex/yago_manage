@@ -59,6 +59,113 @@ const sendEmployeeMenu = (chatId) => {
   bot.sendMessage(chatId, "Выберите раздел:", MAIN_MENU);
 };
 
+const buildRecipeKeyboard = (items, includeBack) => {
+  const rows = items.map((item) => [item.name]);
+  const controlRow = [];
+  if (includeBack) {
+    controlRow.push("Назад");
+  }
+  controlRow.push("В меню");
+  rows.push(controlRow);
+  return {
+    reply_markup: {
+      keyboard: rows,
+      resize_keyboard: true,
+      one_time_keyboard: true,
+    },
+  };
+};
+
+const getRecipeChildren = (data, companyId, parentId) =>
+  data.recipes.filter(
+    (item) => item.companyId === companyId && item.parentId === parentId
+  );
+
+const startRecipeFlow = (session, chatId, data, companyId) => {
+  session.view = "recipes";
+  session.recipeStack = [null];
+  const items = getRecipeChildren(data, companyId, null);
+  if (!items.length) {
+    bot.sendMessage(
+      chatId,
+      "Рецептов пока нет. Обратитесь к владельцу.",
+      {
+        reply_markup: {
+          keyboard: [["В меню"]],
+          resize_keyboard: true,
+          one_time_keyboard: true,
+        },
+      }
+    );
+    return;
+  }
+  session.recipeOptions = new Map(items.map((item) => [item.name, item.id]));
+  bot.sendMessage(chatId, "Выберите категорию:", buildRecipeKeyboard(items, false));
+};
+
+const handleRecipeNavigation = (session, chatId, data, companyId, text) => {
+  if (text === "В меню") {
+    session.view = null;
+    session.recipeStack = null;
+    session.recipeOptions = null;
+    sendEmployeeMenu(chatId);
+    return true;
+  }
+
+  if (text === "Назад") {
+    if (session.recipeStack && session.recipeStack.length > 1) {
+      session.recipeStack.pop();
+    }
+    const parentId = session.recipeStack ? session.recipeStack[session.recipeStack.length - 1] : null;
+    const items = getRecipeChildren(data, companyId, parentId);
+    if (!items.length) {
+      bot.sendMessage(
+        chatId,
+        "В этой категории пока нет подкатегорий или рецептов.",
+        buildRecipeKeyboard([], session.recipeStack && session.recipeStack.length > 1)
+      );
+      return true;
+    }
+    session.recipeOptions = new Map(items.map((item) => [item.name, item.id]));
+    bot.sendMessage(chatId, "Выберите раздел:", buildRecipeKeyboard(items, session.recipeStack.length > 1));
+    return true;
+  }
+
+  if (!session.recipeOptions || !session.recipeOptions.has(text)) {
+    return false;
+  }
+
+  const recipeId = session.recipeOptions.get(text);
+  const selected = data.recipes.find((item) => item.id === recipeId);
+  if (!selected) {
+    bot.sendMessage(chatId, "Раздел не найден. Попробуйте ещё раз.");
+    return true;
+  }
+
+  if (selected.type === "recipe") {
+    bot.sendMessage(
+      chatId,
+      `Рецепт: ${selected.name}\n\n${selected.description || "Описание пока не заполнено."}`,
+      buildRecipeKeyboard([], session.recipeStack && session.recipeStack.length > 1)
+    );
+    return true;
+  }
+
+  session.recipeStack.push(selected.id);
+  const items = getRecipeChildren(data, companyId, selected.id);
+  if (!items.length) {
+    bot.sendMessage(
+      chatId,
+      "В этой категории пока нет подкатегорий или рецептов.",
+      buildRecipeKeyboard([], true)
+    );
+    return true;
+  }
+  session.recipeOptions = new Map(items.map((item) => [item.name, item.id]));
+  bot.sendMessage(chatId, "Выберите раздел:", buildRecipeKeyboard(items, true));
+  return true;
+};
+
 bot.onText(/\/start/, (msg) => {
   const telegramId = msg.from.id;
   resetSession(telegramId);
@@ -82,6 +189,20 @@ bot.on("message", (msg) => {
 
   const existingEmployee = findEmployeeByTelegramId(data, telegramId);
   if (existingEmployee) {
+    if (session.view === "recipes") {
+      if (
+        handleRecipeNavigation(
+          session,
+          chatId,
+          data,
+          existingEmployee.companyId,
+          text
+        )
+      ) {
+        return;
+      }
+    }
+
     if (text === "Профиль") {
       const company = data.companies.find((item) => item.id === existingEmployee.companyId);
       const companyName = company ? company.name : "(не найдена)";
@@ -94,17 +215,7 @@ bot.on("message", (msg) => {
     }
 
     if (text === "Рецепты") {
-      bot.sendMessage(
-        chatId,
-        "Раздел рецептов в разработке. Пока тут пусто.",
-        {
-          reply_markup: {
-            keyboard: [["Назад"]],
-            resize_keyboard: true,
-            one_time_keyboard: true,
-          },
-        }
-      );
+      startRecipeFlow(session, chatId, data, existingEmployee.companyId);
       return;
     }
 
