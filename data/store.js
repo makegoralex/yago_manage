@@ -17,6 +17,7 @@ const emptyData = {
   owners: [],
   employees: [],
   companies: [],
+  recipes: [],
 };
 
 const ensureDatabase = () => {
@@ -39,7 +40,12 @@ const ensureDatabase = () => {
 const readData = () => {
   ensureDatabase();
   const raw = fs.readFileSync(DB_PATH, "utf8");
-  return JSON.parse(raw);
+  const parsed = JSON.parse(raw);
+  return {
+    ...emptyData,
+    ...parsed,
+    recipes: parsed.recipes || [],
+  };
 };
 
 const writeData = (data) => {
