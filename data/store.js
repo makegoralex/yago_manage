@@ -18,6 +18,11 @@ const emptyData = {
   employees: [],
   companies: [],
   recipes: [],
+  bookings: [],
+  shiftStatuses: [],
+  reportTemplates: [],
+  reportRules: [],
+  reportSubmissions: [],
 };
 
 const ensureDatabase = () => {
@@ -45,6 +50,11 @@ const readData = () => {
     ...emptyData,
     ...parsed,
     recipes: parsed.recipes || [],
+    bookings: parsed.bookings || [],
+    shiftStatuses: parsed.shiftStatuses || [],
+    reportTemplates: parsed.reportTemplates || [],
+    reportRules: parsed.reportRules || [],
+    reportSubmissions: parsed.reportSubmissions || [],
   };
 };
 
