@@ -26,6 +26,14 @@ const ROLE_MENU = {
   },
 };
 
+const OWNER_MENU = {
+  reply_markup: {
+    keyboard: [["График"], ["В меню"]],
+    resize_keyboard: true,
+    one_time_keyboard: true,
+  },
+};
+
 const DAYS = [
   { key: "mon", label: "Пн", index: 1 },
   { key: "tue", label: "Вт", index: 2 },
@@ -300,6 +308,62 @@ const getBookingCounts = (data, companyId, dateKey, shiftId) => {
   };
 };
 
+const getShiftLabel = (schedule, dayIndex, shiftId) => {
+  const day = schedule.days.find((item) => item.dayIndex === dayIndex);
+  const shift = day ? day.shifts.find((item) => item.id === shiftId) : null;
+  return shift ? `${shift.start}-${shift.end}` : "смена удалена";
+};
+
+const buildEmployeeBookingSummary = (bookings, schedule) => {
+  if (!bookings.length) {
+    return "Пока нет записей на смены.";
+  }
+  return bookings
+    .map((item) => {
+      const shiftLabel = getShiftLabel(schedule, item.dayIndex, item.shiftId);
+      return `• ${item.date} ${shiftLabel} (${item.status})`;
+    })
+    .join("\n");
+};
+
+const buildOwnerScheduleSummary = (bookings, schedule, employees) => {
+  if (!bookings.length) {
+    return "Пока нет записей на смены.";
+  }
+  const grouped = new Map();
+  bookings.forEach((booking) => {
+    if (!grouped.has(booking.date)) {
+      grouped.set(booking.date, new Map());
+    }
+    const shiftMap = grouped.get(booking.date);
+    if (!shiftMap.has(booking.shiftId)) {
+      shiftMap.set(booking.shiftId, []);
+    }
+    shiftMap.get(booking.shiftId).push(booking);
+  });
+
+  const sortedDates = [...grouped.keys()].sort();
+  return sortedDates
+    .map((date) => {
+      const shifts = grouped.get(date);
+      const shiftLines = [...shifts.entries()]
+        .map(([shiftId, items]) => {
+          const shiftLabel = getShiftLabel(schedule, items[0]?.dayIndex, shiftId);
+          const people = items
+            .map((item) => {
+              const employee = employees.find((emp) => emp.id === item.employeeId);
+              const name = employee ? employee.name : "Неизвестный сотрудник";
+              return `${name} (${item.status})`;
+            })
+            .join(", ");
+          return `  - ${shiftLabel}: ${people}`;
+        })
+        .join("\n");
+      return `${date}\n${shiftLines}`;
+    })
+    .join("\n\n");
+};
+
 const startScheduleFlow = (session, chatId, data, companyId, employeeId) => {
   const company = data.companies.find((item) => item.id === companyId);
   const schedule = normalizeSchedule(company);
@@ -312,11 +376,7 @@ const startScheduleFlow = (session, chatId, data, companyId, employeeId) => {
   const employeeBookings = data.bookings.filter(
     (item) => item.companyId === companyId && item.employeeId === employeeId
   );
-  const upcomingSummary = employeeBookings.length
-    ? employeeBookings
-        .map((item) => `• ${item.date} (${item.status})`)
-        .join("\n")
-    : "Пока нет записей на смены.";
+  const upcomingSummary = buildEmployeeBookingSummary(employeeBookings, schedule);
   bot.sendMessage(chatId, `Ваши смены:\n${upcomingSummary}`);
 
   session.view = "schedule";
@@ -469,6 +529,7 @@ bot.on("message", (msg) => {
   const data = readData();
 
   const existingEmployee = findEmployeeByTelegramId(data, telegramId);
+  const existingOwner = existingEmployee ? null : findOwnerByTelegramId(data, telegramId);
   if (existingEmployee) {
     if (session.view === "recipes") {
       if (
@@ -526,6 +587,23 @@ bot.on("message", (msg) => {
     }
   }
 
+  if (existingOwner) {
+    if (text === "В меню") {
+      bot.sendMessage(chatId, "Раздел владельца:", OWNER_MENU);
+      return;
+    }
+
+    if (text === "График") {
+      const company = data.companies.find((item) => item.id === existingOwner.companyId);
+      const schedule = normalizeSchedule(company);
+      const employees = data.employees.filter((item) => item.companyId === existingOwner.companyId);
+      const bookings = data.bookings.filter((item) => item.companyId === existingOwner.companyId);
+      const summary = buildOwnerScheduleSummary(bookings, schedule, employees);
+      bot.sendMessage(chatId, `Расписание смен:\n${summary}`, OWNER_MENU);
+      return;
+    }
+  }
+
   if (text === "Я владелец") {
     session.role = "owner";
     session.step = "company";
@@ -546,6 +624,11 @@ bot.on("message", (msg) => {
     const employee = findEmployeeByTelegramId(data, telegramId);
     if (employee) {
       sendEmployeeMenu(chatId);
+      return;
+    }
+    const owner = findOwnerByTelegramId(data, telegramId);
+    if (owner) {
+      bot.sendMessage(chatId, "Раздел владельца:", OWNER_MENU);
       return;
     }
 
@@ -598,6 +681,7 @@ bot.on("message", (msg) => {
         chatId,
         `Регистрация завершена!\nИнвайт-код: ${company.inviteCode}\nЛогин: ${session.data.login}`
       );
+      bot.sendMessage(chatId, "Раздел владельца:", OWNER_MENU);
       resetSession(telegramId);
       return;
     }
@@ -632,6 +716,7 @@ bot.on("message", (msg) => {
         chatId,
         `Вход выполнен!\nКомпания: ${companyName}\nИнвайт-код: ${inviteCode}`
       );
+      bot.sendMessage(chatId, "Раздел владельца:", OWNER_MENU);
       resetSession(telegramId);
       return;
     }

@@ -224,7 +224,50 @@ const renderPendingBookings = (owner, bookings, employees, schedule) => {
   `;
 };
 
-const renderSchedulePage = (owner, company, employees, schedule, bookings, error) =>
+const renderScheduleRoster = (bookings, employees, schedule) => {
+  if (!bookings.length) {
+    return "<p class=\"muted\">Пока нет записей на смены.</p>";
+  }
+  const grouped = new Map();
+  bookings.forEach((booking) => {
+    if (!grouped.has(booking.date)) {
+      grouped.set(booking.date, new Map());
+    }
+    const shifts = grouped.get(booking.date);
+    if (!shifts.has(booking.shiftId)) {
+      shifts.set(booking.shiftId, []);
+    }
+    shifts.get(booking.shiftId).push(booking);
+  });
+
+  const sortedDates = [...grouped.keys()].sort();
+  const sections = sortedDates
+    .map((date) => {
+      const shifts = grouped.get(date);
+      const shiftRows = [...shifts.entries()]
+        .map(([shiftId, items]) => {
+          const dayIndex = items[0]?.dayIndex;
+          const day = schedule.days.find((item) => item.dayIndex === dayIndex);
+          const shift = day ? day.shifts.find((item) => item.id === shiftId) : null;
+          const shiftLabel = shift ? `${shift.start}-${shift.end}` : "смена удалена";
+          const people = items
+            .map((item) => {
+              const employee = employees.find((emp) => emp.id === item.employeeId);
+              const name = employee ? employee.name : "Неизвестный сотрудник";
+              return `${name} (${item.status})`;
+            })
+            .join(", ");
+          return `<li><strong>${shiftLabel}</strong>: ${people}</li>`;
+        })
+        .join("");
+      return `<div style="margin-bottom:12px;"><strong>${date}</strong><ul>${shiftRows}</ul></div>`;
+    })
+    .join("");
+
+  return sections;
+};
+
+const renderSchedulePage = (owner, company, employees, schedule, bookings, pendingBookings, error) =>
   renderLayout(
     "График работы",
     `<div class="card">
@@ -232,8 +275,10 @@ const renderSchedulePage = (owner, company, employees, schedule, bookings, error
       ${renderScheduleForm(owner, schedule, error)}
       <h2>Текущее расписание</h2>
       <ul>${buildScheduleSummary(schedule)}</ul>
+      <h2>Кто выходит на смены</h2>
+      ${renderScheduleRoster(bookings, employees, schedule)}
       <h2>Заявки на подтверждение</h2>
-      ${renderPendingBookings(owner, bookings, employees, schedule)}
+      ${renderPendingBookings(owner, pendingBookings, employees, schedule)}
       <p class="muted"><a href="/">Выйти</a></p>
     </div>`
   );
@@ -365,12 +410,12 @@ const parseShifts = (value, dayIndex) => {
     .map((chunk) => chunk.trim())
     .filter(Boolean)
     .map((chunk, index) => {
-      const match = chunk.match(/^\s*(\d{2}:\d{2})-(\d{2}:\d{2})\s*:\s*(\d+)\s*$/);
+      const match = chunk.match(/^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})\s*:\s*(\d+)$/);
       if (!match) {
         throw new Error("Неверный формат смен. Используйте 08:00-15:00:2.");
       }
-      const [, start, end, slotsValue] = match;
-      const slots = Number.parseInt(slotsValue, 10);
+      const [, start, end, slotsRaw] = match;
+      const slots = Number.parseInt(slotsRaw, 10);
       if (!isValidTime(start) || !isValidTime(end) || Number.isNaN(slots) || slots < 1) {
         throw new Error("Неверный формат смен. Используйте 08:00-15:00:2.");
       }
@@ -470,11 +515,10 @@ const server = http.createServer((req, res) => {
     if (section === "schedule") {
       const schedule = normalizeSchedule(company);
       const employees = data.employees.filter((employee) => employee.companyId === company.id);
-      const pendingBookings = data.bookings.filter(
-        (booking) => booking.companyId === company.id && booking.status === "pending"
-      );
+      const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+      const pendingBookings = companyBookings.filter((booking) => booking.status === "pending");
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderSchedulePage(owner, company, employees, schedule, pendingBookings));
+      res.end(renderSchedulePage(owner, company, employees, schedule, companyBookings, pendingBookings));
       return;
     }
 
@@ -535,15 +579,15 @@ const server = http.createServer((req, res) => {
           if (!booking) {
             res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
             const employees = data.employees.filter((employee) => employee.companyId === company.id);
-            const pendingBookings = data.bookings.filter(
-              (item) => item.companyId === company.id && item.status === "pending"
-            );
+            const companyBookings = data.bookings.filter((item) => item.companyId === company.id);
+            const pendingBookings = companyBookings.filter((item) => item.status === "pending");
             res.end(
               renderSchedulePage(
                 owner,
                 company,
                 employees,
                 normalizeSchedule(company),
+                companyBookings,
                 pendingBookings,
                 "Заявка не найдена."
               )
@@ -565,10 +609,19 @@ const server = http.createServer((req, res) => {
             if (approvedCount >= shift.slots) {
               res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
               const employees = data.employees.filter((employee) => employee.companyId === company.id);
-              const pendingBookings = data.bookings.filter(
-                (item) => item.companyId === company.id && item.status === "pending"
+              const companyBookings = data.bookings.filter((item) => item.companyId === company.id);
+              const pendingBookings = companyBookings.filter((item) => item.status === "pending");
+              res.end(
+                renderSchedulePage(
+                  owner,
+                  company,
+                  employees,
+                  schedule,
+                  companyBookings,
+                  pendingBookings,
+                  "Все слоты в смене уже заняты."
+                )
               );
-              res.end(renderSchedulePage(owner, company, employees, schedule, pendingBookings, "Все слоты в смене уже заняты."));
               return;
             }
           }
@@ -598,11 +651,20 @@ const server = http.createServer((req, res) => {
           res.end();
         } catch (error) {
           const employees = data.employees.filter((employee) => employee.companyId === company.id);
-          const pendingBookings = data.bookings.filter(
-            (booking) => booking.companyId === company.id && booking.status === "pending"
-          );
+          const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+          const pendingBookings = companyBookings.filter((booking) => booking.status === "pending");
           res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-          res.end(renderSchedulePage(owner, company, employees, normalizeSchedule(company), pendingBookings, error.message));
+          res.end(
+            renderSchedulePage(
+              owner,
+              company,
+              employees,
+              normalizeSchedule(company),
+              companyBookings,
+              pendingBookings,
+              error.message
+            )
+          );
         }
       });
       return;
