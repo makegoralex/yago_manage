@@ -13,7 +13,7 @@ const sessions = new Map();
 
 const MAIN_MENU = {
   reply_markup: {
-    keyboard: [["Профиль", "Рецепты"]],
+    keyboard: [["Профиль", "Рецепты"], ["График"]],
     resize_keyboard: true,
   },
 };
@@ -26,6 +26,27 @@ const ROLE_MENU = {
   },
 };
 
+const DAYS = [
+  { key: "mon", label: "Пн", index: 1 },
+  { key: "tue", label: "Вт", index: 2 },
+  { key: "wed", label: "Ср", index: 3 },
+  { key: "thu", label: "Чт", index: 4 },
+  { key: "fri", label: "Пт", index: 5 },
+  { key: "sat", label: "Сб", index: 6 },
+  { key: "sun", label: "Вс", index: 0 },
+];
+
+const DEFAULT_SCHEDULE = {
+  bookingMode: "auto",
+  bookingPeriod: "weekly",
+  days: DAYS.map((day) => ({
+    dayIndex: day.index,
+    open: "",
+    close: "",
+    shifts: [],
+  })),
+};
+
 const createId = () =>
   `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
@@ -36,6 +57,77 @@ const generateInviteCode = (companies) => {
     code = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
   } while (companies.some((company) => company.inviteCode === code));
   return code;
+};
+
+const normalizeSchedule = (company) => {
+  if (!company || !company.scheduleConfig) {
+    return { ...DEFAULT_SCHEDULE };
+  }
+  const existing = company.scheduleConfig;
+  return {
+    bookingMode: existing.bookingMode === "manual" ? "manual" : "auto",
+    bookingPeriod: existing.bookingPeriod === "monthly" ? "monthly" : "weekly",
+    days: DAYS.map((day) => {
+      const current = (existing.days || []).find((item) => item.dayIndex === day.index);
+      if (!current) {
+        return { dayIndex: day.index, open: "", close: "", shifts: [] };
+      }
+      return {
+        dayIndex: day.index,
+        open: current.open || "",
+        close: current.close || "",
+        shifts: Array.isArray(current.shifts) ? current.shifts : [],
+      };
+    }),
+  };
+};
+
+const getPeriodRange = (period, now = new Date()) => {
+  const start = new Date(now);
+  const end = new Date(now);
+  if (period === "monthly") {
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+    end.setMonth(end.getMonth() + 1, 0);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+  const day = start.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  start.setDate(start.getDate() + diff);
+  start.setHours(0, 0, 0, 0);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+};
+
+const formatDateKey = (date) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const parseDateKey = (value) => {
+  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+  return new Date(year, month - 1, day);
+};
+
+const formatDateLabel = (date) => {
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const weekday = DAYS.find((item) => item.index === date.getDay());
+  return `${weekday ? weekday.label : ""} ${day}.${month}`;
+};
+
+const getDatesInRange = (start, end) => {
+  const dates = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    dates.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
 };
 
 const getSession = (userId) => {
@@ -166,6 +258,195 @@ const handleRecipeNavigation = (session, chatId, data, companyId, text) => {
   return true;
 };
 
+const buildDateKeyboard = (dates) => {
+  const rows = dates.map((label) => [label]);
+  rows.push(["В меню"]);
+  return {
+    reply_markup: {
+      keyboard: rows,
+      resize_keyboard: true,
+      one_time_keyboard: true,
+    },
+  };
+};
+
+const buildShiftKeyboard = (labels) => {
+  const rows = labels.map((label) => [label]);
+  rows.push(["Назад", "В меню"]);
+  return {
+    reply_markup: {
+      keyboard: rows,
+      resize_keyboard: true,
+      one_time_keyboard: true,
+    },
+  };
+};
+
+const getScheduleDates = (schedule) => {
+  const { start, end } = getPeriodRange(schedule.bookingPeriod);
+  return getDatesInRange(start, end).filter((date) => {
+    const dayConfig = schedule.days.find((item) => item.dayIndex === date.getDay());
+    return dayConfig && dayConfig.shifts.length > 0;
+  });
+};
+
+const getBookingCounts = (data, companyId, dateKey, shiftId) => {
+  const filtered = data.bookings.filter(
+    (item) => item.companyId === companyId && item.date === dateKey && item.shiftId === shiftId
+  );
+  return {
+    approved: filtered.filter((item) => item.status === "approved").length,
+    pending: filtered.filter((item) => item.status === "pending").length,
+  };
+};
+
+const startScheduleFlow = (session, chatId, data, companyId, employeeId) => {
+  const company = data.companies.find((item) => item.id === companyId);
+  const schedule = normalizeSchedule(company);
+  const dates = getScheduleDates(schedule);
+  if (!dates.length) {
+    bot.sendMessage(chatId, "График пока не настроен или нет доступных смен.", MAIN_MENU);
+    return;
+  }
+
+  const employeeBookings = data.bookings.filter(
+    (item) => item.companyId === companyId && item.employeeId === employeeId
+  );
+  const upcomingSummary = employeeBookings.length
+    ? employeeBookings
+        .map((item) => `• ${item.date} (${item.status})`)
+        .join("\n")
+    : "Пока нет записей на смены.";
+  bot.sendMessage(chatId, `Ваши смены:\n${upcomingSummary}`);
+
+  session.view = "schedule";
+  session.step = "schedule-date";
+  session.scheduleDates = new Map(
+    dates.map((date) => [formatDateLabel(date), formatDateKey(date)])
+  );
+  bot.sendMessage(
+    chatId,
+    "Выберите дату для просмотра смен:",
+    buildDateKeyboard([...session.scheduleDates.keys()])
+  );
+};
+
+const handleScheduleNavigation = (session, chatId, data, companyId, employeeId, text) => {
+  const company = data.companies.find((item) => item.id === companyId);
+  const schedule = normalizeSchedule(company);
+
+  if (text === "В меню") {
+    session.view = null;
+    session.step = null;
+    session.scheduleDates = null;
+    session.scheduleShifts = null;
+    sendEmployeeMenu(chatId);
+    return true;
+  }
+
+  if (session.step === "schedule-date") {
+    if (!session.scheduleDates || !session.scheduleDates.has(text)) {
+      return false;
+    }
+    const dateKey = session.scheduleDates.get(text);
+    const date = parseDateKey(dateKey);
+    const dayConfig = schedule.days.find((item) => item.dayIndex === date.getDay());
+    if (!dayConfig || !dayConfig.shifts.length) {
+      bot.sendMessage(chatId, "В этот день смен нет. Выберите другую дату.");
+      return true;
+    }
+    session.step = "schedule-shift";
+    session.selectedDateKey = dateKey;
+    session.scheduleShifts = new Map(
+      dayConfig.shifts.map((shift) => {
+        const counts = getBookingCounts(data, companyId, dateKey, shift.id);
+        const label = `${shift.start}-${shift.end} (мест: ${shift.slots}, занято: ${counts.approved}, ожидание: ${counts.pending})`;
+        return [label, shift.id];
+      })
+    );
+    bot.sendMessage(
+      chatId,
+      `Смены на ${text}. Выберите смену:`,
+      buildShiftKeyboard([...session.scheduleShifts.keys()])
+    );
+    return true;
+  }
+
+  if (session.step === "schedule-shift") {
+    if (text === "Назад") {
+      session.step = "schedule-date";
+      session.scheduleShifts = null;
+      bot.sendMessage(
+        chatId,
+        "Выберите дату для просмотра смен:",
+        buildDateKeyboard([...session.scheduleDates.keys()])
+      );
+      return true;
+    }
+    if (!session.scheduleShifts || !session.scheduleShifts.has(text)) {
+      return false;
+    }
+    const shiftId = session.scheduleShifts.get(text);
+    const dateKey = session.selectedDateKey;
+    const dayConfig = schedule.days.find((item) =>
+      item.shifts.some((shift) => shift.id === shiftId)
+    );
+    const shift = dayConfig ? dayConfig.shifts.find((item) => item.id === shiftId) : null;
+    if (!shift) {
+      bot.sendMessage(chatId, "Смена не найдена. Попробуйте ещё раз.");
+      return true;
+    }
+
+    const alreadyBooked = data.bookings.find(
+      (item) =>
+        item.companyId === companyId &&
+        item.employeeId === employeeId &&
+        item.date === dateKey &&
+        item.shiftId === shiftId &&
+        item.status !== "declined"
+    );
+    if (alreadyBooked) {
+      bot.sendMessage(chatId, "Вы уже записаны на эту смену.");
+      return true;
+    }
+
+    const counts = getBookingCounts(data, companyId, dateKey, shiftId);
+    if (schedule.bookingMode === "auto" && counts.approved >= shift.slots) {
+      bot.sendMessage(chatId, "Все слоты заняты. Выберите другую смену.");
+      return true;
+    }
+
+    const status = schedule.bookingMode === "auto" ? "approved" : "pending";
+    updateData((draft) => {
+      draft.bookings.push({
+        id: createId(),
+        companyId,
+        employeeId,
+        date: dateKey,
+        dayIndex: dayConfig.dayIndex,
+        shiftId,
+        status,
+        createdAt: new Date().toISOString(),
+      });
+      return draft;
+    });
+    bot.sendMessage(
+      chatId,
+      status === "approved"
+        ? "Вы записаны на смену."
+        : "Заявка отправлена владельцу на подтверждение."
+    );
+    session.view = null;
+    session.step = null;
+    session.scheduleDates = null;
+    session.scheduleShifts = null;
+    sendEmployeeMenu(chatId);
+    return true;
+  }
+
+  return false;
+};
+
 bot.onText(/\/start/, (msg) => {
   const telegramId = msg.from.id;
   resetSession(telegramId);
@@ -203,6 +484,21 @@ bot.on("message", (msg) => {
       }
     }
 
+    if (session.view === "schedule") {
+      if (
+        handleScheduleNavigation(
+          session,
+          chatId,
+          data,
+          existingEmployee.companyId,
+          existingEmployee.id,
+          text
+        )
+      ) {
+        return;
+      }
+    }
+
     if (text === "Профиль") {
       const company = data.companies.find((item) => item.id === existingEmployee.companyId);
       const companyName = company ? company.name : "(не найдена)";
@@ -216,6 +512,11 @@ bot.on("message", (msg) => {
 
     if (text === "Рецепты") {
       startRecipeFlow(session, chatId, data, existingEmployee.companyId);
+      return;
+    }
+
+    if (text === "График") {
+      startScheduleFlow(session, chatId, data, existingEmployee.companyId, existingEmployee.id);
       return;
     }
 
