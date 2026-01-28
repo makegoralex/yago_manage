@@ -268,6 +268,7 @@ const handleRecipeNavigation = (session, chatId, data, companyId, text) => {
 
 const buildDateKeyboard = (dates) => {
   const rows = dates.map((label) => [label]);
+  rows.push(["Отменить запись"]);
   rows.push(["В меню"]);
   return {
     reply_markup: {
@@ -279,6 +280,18 @@ const buildDateKeyboard = (dates) => {
 };
 
 const buildShiftKeyboard = (labels) => {
+  const rows = labels.map((label) => [label]);
+  rows.push(["Назад", "В меню"]);
+  return {
+    reply_markup: {
+      keyboard: rows,
+      resize_keyboard: true,
+      one_time_keyboard: true,
+    },
+  };
+};
+
+const buildCancelKeyboard = (labels) => {
   const rows = labels.map((label) => [label]);
   rows.push(["Назад", "В меню"]);
   return {
@@ -324,6 +337,20 @@ const buildEmployeeBookingSummary = (bookings, schedule) => {
       return `• ${item.date} ${shiftLabel} (${item.status})`;
     })
     .join("\n");
+};
+
+const buildEmployeeBookingOptions = (bookings, schedule) =>
+  bookings.map((item) => {
+    const shiftLabel = getShiftLabel(schedule, item.dayIndex, item.shiftId);
+    return `${item.date} ${shiftLabel}`;
+  });
+
+const notifyOwnerCancellation = (data, companyId, message) => {
+  const owner = data.owners.find((item) => item.companyId === companyId);
+  if (!owner || !owner.telegramId) {
+    return;
+  }
+  bot.sendMessage(owner.telegramId, message);
 };
 
 const buildOwnerScheduleSummary = (bookings, schedule, employees) => {
@@ -374,13 +401,24 @@ const startScheduleFlow = (session, chatId, data, companyId, employeeId) => {
   }
 
   const employeeBookings = data.bookings.filter(
-    (item) => item.companyId === companyId && item.employeeId === employeeId
+    (item) =>
+      item.companyId === companyId &&
+      item.employeeId === employeeId &&
+      item.status !== "cancelled" &&
+      item.status !== "declined"
   );
   const upcomingSummary = buildEmployeeBookingSummary(employeeBookings, schedule);
   bot.sendMessage(chatId, `Ваши смены:\n${upcomingSummary}`);
 
   session.view = "schedule";
   session.step = "schedule-date";
+  session.employeeBookings = employeeBookings;
+  session.cancelOptions = new Map(
+    buildEmployeeBookingOptions(employeeBookings, schedule).map((label, index) => [
+      label,
+      employeeBookings[index],
+    ])
+  );
   session.scheduleDates = new Map(
     dates.map((date) => [formatDateLabel(date), formatDateKey(date)])
   );
@@ -400,7 +438,20 @@ const handleScheduleNavigation = (session, chatId, data, companyId, employeeId, 
     session.step = null;
     session.scheduleDates = null;
     session.scheduleShifts = null;
+    session.employeeBookings = null;
+    session.cancelOptions = null;
+    session.cancelTarget = null;
     sendEmployeeMenu(chatId);
+    return true;
+  }
+
+  if (text === "Отменить запись") {
+    if (!session.cancelOptions || !session.cancelOptions.size) {
+      bot.sendMessage(chatId, "У вас нет активных записей для отмены.");
+      return true;
+    }
+    session.step = "cancel-select";
+    bot.sendMessage(chatId, "Выберите смену для отмены:", buildCancelKeyboard([...session.cancelOptions.keys()]));
     return true;
   }
 
@@ -420,7 +471,11 @@ const handleScheduleNavigation = (session, chatId, data, companyId, employeeId, 
     session.scheduleShifts = new Map(
       dayConfig.shifts.map((shift) => {
         const counts = getBookingCounts(data, companyId, dateKey, shift.id);
-        const label = `${shift.start}-${shift.end} (мест: ${shift.slots}, занято: ${counts.approved}, ожидание: ${counts.pending})`;
+        const available = Math.max(shift.slots - counts.approved, 0);
+        const label =
+          available > 0
+            ? `${shift.start}-${shift.end} (свободно: ${available}, занято: ${counts.approved}, ожидание: ${counts.pending})`
+            : `${shift.start}-${shift.end} (мест нет, занято: ${counts.approved}, ожидание: ${counts.pending})`;
         return [label, shift.id];
       })
     );
@@ -463,7 +518,8 @@ const handleScheduleNavigation = (session, chatId, data, companyId, employeeId, 
         item.employeeId === employeeId &&
         item.date === dateKey &&
         item.shiftId === shiftId &&
-        item.status !== "declined"
+        item.status !== "declined" &&
+        item.status !== "cancelled"
     );
     if (alreadyBooked) {
       bot.sendMessage(chatId, "Вы уже записаны на эту смену.");
@@ -500,6 +556,63 @@ const handleScheduleNavigation = (session, chatId, data, companyId, employeeId, 
     session.step = null;
     session.scheduleDates = null;
     session.scheduleShifts = null;
+    sendEmployeeMenu(chatId);
+    return true;
+  }
+
+  if (session.step === "cancel-select") {
+    if (text === "Назад") {
+      session.step = "schedule-date";
+      bot.sendMessage(
+        chatId,
+        "Выберите дату для просмотра смен:",
+        buildDateKeyboard([...session.scheduleDates.keys()])
+      );
+      return true;
+    }
+    if (!session.cancelOptions || !session.cancelOptions.has(text)) {
+      return false;
+    }
+    session.cancelTarget = session.cancelOptions.get(text);
+    session.step = "cancel-reason";
+    bot.sendMessage(chatId, "Укажите причину отмены смены:");
+    return true;
+  }
+
+  if (session.step === "cancel-reason") {
+    if (!session.cancelTarget) {
+      session.step = "schedule-date";
+      bot.sendMessage(chatId, "Не удалось найти запись для отмены. Попробуйте ещё раз.");
+      return true;
+    }
+    const reason = text;
+    const bookingId = session.cancelTarget.id;
+    updateData((draft) => {
+      const target = draft.bookings.find((item) => item.id === bookingId);
+      if (target) {
+        target.status = "cancelled";
+        target.cancelReason = reason;
+        target.cancelledAt = new Date().toISOString();
+      }
+      return draft;
+    });
+    notifyOwnerCancellation(
+      data,
+      companyId,
+      `Сотрудник отменил смену ${session.cancelTarget.date} ${getShiftLabel(
+        schedule,
+        session.cancelTarget.dayIndex,
+        session.cancelTarget.shiftId
+      )}.\nПричина: ${reason}`
+    );
+    bot.sendMessage(chatId, "Запись отменена. Слот освобождён.");
+    session.view = null;
+    session.step = null;
+    session.scheduleDates = null;
+    session.scheduleShifts = null;
+    session.employeeBookings = null;
+    session.cancelOptions = null;
+    session.cancelTarget = null;
     sendEmployeeMenu(chatId);
     return true;
   }
