@@ -2,6 +2,27 @@ const http = require("http");
 const querystring = require("querystring");
 const { readData, updateData } = require("../data/store");
 
+const DAYS = [
+  { key: "mon", label: "Пн", index: 1 },
+  { key: "tue", label: "Вт", index: 2 },
+  { key: "wed", label: "Ср", index: 3 },
+  { key: "thu", label: "Чт", index: 4 },
+  { key: "fri", label: "Пт", index: 5 },
+  { key: "sat", label: "Сб", index: 6 },
+  { key: "sun", label: "Вс", index: 0 },
+];
+
+const DEFAULT_SCHEDULE = {
+  bookingMode: "auto",
+  bookingPeriod: "weekly",
+  days: DAYS.map((day) => ({
+    dayIndex: day.index,
+    open: "",
+    close: "",
+    shifts: [],
+  })),
+};
+
 const renderLayout = (title, body) => `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -18,6 +39,14 @@ const renderLayout = (title, body) => `<!DOCTYPE html>
     .error { color: #d63031; margin-top: 12px; }
     ul { padding-left: 18px; }
     .muted { color: #636e72; font-size: 14px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eceff4; }
+    textarea { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #dcdde1; }
+    .grid { display: grid; gap: 12px; }
+    .row { display: flex; gap: 12px; }
+    .row > * { flex: 1; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #f1f2f6; font-size: 12px; }
+    .actions { display: flex; gap: 8px; }
   </style>
 </head>
 <body>
@@ -49,12 +78,208 @@ const renderDashboard = (company, employees, owner) =>
       <h1>Организация: ${company.name}</h1>
       <p class="muted">Инвайт-код: ${company.inviteCode}</p>
       <p><a href="/owner/${owner.id}/recipes">Управление рецептами</a></p>
+      <p><a href="/owner/${owner.id}/schedule">График работы и смены</a></p>
       <h2>Сотрудники</h2>
       ${
         employees.length
           ? `<ul>${employees.map((emp) => `<li>${emp.name}</li>`).join("")}</ul>`
           : "<p>Сотрудников пока нет.</p>"
       }
+    </div>`
+  );
+
+const normalizeSchedule = (company) => {
+  if (!company.scheduleConfig) {
+    return { ...DEFAULT_SCHEDULE };
+  }
+  const existing = company.scheduleConfig;
+  const days = DAYS.map((day) => {
+    const current = (existing.days || []).find((item) => item.dayIndex === day.index);
+    if (!current) {
+      return { dayIndex: day.index, open: "", close: "", shifts: [] };
+    }
+    return {
+      dayIndex: day.index,
+      open: current.open || "",
+      close: current.close || "",
+      shifts: Array.isArray(current.shifts) ? current.shifts : [],
+    };
+  });
+  return {
+    bookingMode: existing.bookingMode === "manual" ? "manual" : "auto",
+    bookingPeriod: existing.bookingPeriod === "monthly" ? "monthly" : "weekly",
+    days,
+  };
+};
+
+const formatScheduleLine = (day) => {
+  if (!day.open || !day.close) {
+    return "выходной";
+  }
+  const shifts = day.shifts.length
+    ? day.shifts
+        .map((shift) => `${shift.start}-${shift.end} (${shift.slots} мест)`)
+        .join(", ")
+    : "без смен";
+  return `${day.open}-${day.close}, смены: ${shifts}`;
+};
+
+const buildScheduleSummary = (schedule) =>
+  DAYS.map((day) => {
+    const info = schedule.days.find((item) => item.dayIndex === day.index);
+    return `<li><strong>${day.label}</strong>: ${formatScheduleLine(info)}</li>`;
+  }).join("");
+
+const formatShiftInputValue = (day) =>
+  day.shifts
+    .map((shift) => `${shift.start}-${shift.end}:${shift.slots}`)
+    .join(", ");
+
+const renderScheduleForm = (owner, schedule, error) => `
+  <h2>Настройка графика</h2>
+  ${error ? `<div class="error">${error}</div>` : ""}
+  <form method="POST" action="/owner/${owner.id}/schedule">
+    <label>Режим бронирования</label>
+    <select name="bookingMode">
+      <option value="auto" ${schedule.bookingMode === "auto" ? "selected" : ""}>Автоматически подтверждать</option>
+      <option value="manual" ${schedule.bookingMode === "manual" ? "selected" : ""}>Подтверждать вручную</option>
+    </select>
+    <label>Период открытия записей</label>
+    <select name="bookingPeriod">
+      <option value="weekly" ${schedule.bookingPeriod === "weekly" ? "selected" : ""}>Раз в неделю</option>
+      <option value="monthly" ${schedule.bookingPeriod === "monthly" ? "selected" : ""}>Раз в месяц</option>
+    </select>
+    <h3>Дни недели</h3>
+    ${DAYS.map((dayMeta) => {
+      const day = schedule.days.find((item) => item.dayIndex === dayMeta.index);
+      return `
+        <div class="grid" style="margin-bottom:12px;">
+          <strong>${dayMeta.label}</strong>
+          <div class="row">
+            <div>
+              <label>Открытие</label>
+              <input type="text" name="open_${dayMeta.index}" value="${day.open || ""}" placeholder="08:00" />
+            </div>
+            <div>
+              <label>Закрытие</label>
+              <input type="text" name="close_${dayMeta.index}" value="${day.close || ""}" placeholder="21:00" />
+            </div>
+          </div>
+          <label>Смены (формат: 08:00-15:00:2, 14:00-21:00:1)</label>
+          <input type="text" name="shifts_${dayMeta.index}" value="${formatShiftInputValue(day)}" />
+        </div>
+      `;
+    }).join("")}
+    <button type="submit">Сохранить график</button>
+  </form>
+`;
+
+const renderPendingBookings = (owner, bookings, employees, schedule) => {
+  if (!bookings.length) {
+    return "<p class=\"muted\">Нет заявок на подтверждение.</p>";
+  }
+  const rows = bookings
+    .map((booking) => {
+      const employee = employees.find((item) => item.id === booking.employeeId);
+      const day = schedule.days.find((item) => item.dayIndex === booking.dayIndex);
+      const shift = day ? day.shifts.find((item) => item.id === booking.shiftId) : null;
+      const shiftLabel = shift ? `${shift.start}-${shift.end}` : "смена удалена";
+      return `
+        <tr>
+          <td>${employee ? employee.name : "Неизвестный сотрудник"}</td>
+          <td>${booking.date}</td>
+          <td>${shiftLabel}</td>
+          <td><span class="pill">${booking.status}</span></td>
+          <td class="actions">
+            <form method="POST" action="/owner/${owner.id}/schedule/booking">
+              <input type="hidden" name="bookingId" value="${booking.id}" />
+              <input type="hidden" name="action" value="approve" />
+              <button type="submit">Подтвердить</button>
+            </form>
+            <form method="POST" action="/owner/${owner.id}/schedule/booking">
+              <input type="hidden" name="bookingId" value="${booking.id}" />
+              <input type="hidden" name="action" value="decline" />
+              <button type="submit" style="background:#e17055;">Отклонить</button>
+            </form>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Сотрудник</th>
+          <th>Дата</th>
+          <th>Смена</th>
+          <th>Статус</th>
+          <th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+  `;
+};
+
+const renderScheduleRoster = (bookings, employees, schedule) => {
+  if (!bookings.length) {
+    return "<p class=\"muted\">Пока нет записей на смены.</p>";
+  }
+  const grouped = new Map();
+  bookings.forEach((booking) => {
+    if (!grouped.has(booking.date)) {
+      grouped.set(booking.date, new Map());
+    }
+    const shifts = grouped.get(booking.date);
+    if (!shifts.has(booking.shiftId)) {
+      shifts.set(booking.shiftId, []);
+    }
+    shifts.get(booking.shiftId).push(booking);
+  });
+
+  const sortedDates = [...grouped.keys()].sort();
+  const sections = sortedDates
+    .map((date) => {
+      const shifts = grouped.get(date);
+      const shiftRows = [...shifts.entries()]
+        .map(([shiftId, items]) => {
+          const dayIndex = items[0]?.dayIndex;
+          const day = schedule.days.find((item) => item.dayIndex === dayIndex);
+          const shift = day ? day.shifts.find((item) => item.id === shiftId) : null;
+          const shiftLabel = shift ? `${shift.start}-${shift.end}` : "смена удалена";
+          const people = items
+            .map((item) => {
+              const employee = employees.find((emp) => emp.id === item.employeeId);
+              const name = employee ? employee.name : "Неизвестный сотрудник";
+              return `${name} (${item.status})`;
+            })
+            .join(", ");
+          return `<li><strong>${shiftLabel}</strong>: ${people}</li>`;
+        })
+        .join("");
+      return `<div style="margin-bottom:12px;"><strong>${date}</strong><ul>${shiftRows}</ul></div>`;
+    })
+    .join("");
+
+  return sections;
+};
+
+const renderSchedulePage = (owner, company, employees, schedule, bookings, pendingBookings, error) =>
+  renderLayout(
+    "График работы",
+    `<div class="card">
+      <h1>График работы: ${company.name}</h1>
+      ${renderScheduleForm(owner, schedule, error)}
+      <h2>Текущее расписание</h2>
+      <ul>${buildScheduleSummary(schedule)}</ul>
+      <h2>Кто выходит на смены</h2>
+      ${renderScheduleRoster(bookings, employees, schedule)}
+      <h2>Заявки на подтверждение</h2>
+      ${renderPendingBookings(owner, pendingBookings, employees, schedule)}
+      <p class="muted"><a href="/">Выйти</a></p>
     </div>`
   );
 
@@ -174,6 +399,59 @@ const parseBody = (req, callback) => {
   });
 };
 
+const isValidTime = (value) => /^\d{2}:\d{2}$/.test(value);
+
+const parseShifts = (value, dayIndex) => {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((chunk, index) => {
+      const match = chunk.match(/^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})\s*:\s*(\d+)$/);
+      if (!match) {
+        throw new Error("Неверный формат смен. Используйте 08:00-15:00:2.");
+      }
+      const [, start, end, slotsRaw] = match;
+      const slots = Number.parseInt(slotsRaw, 10);
+      if (!isValidTime(start) || !isValidTime(end) || Number.isNaN(slots) || slots < 1) {
+        throw new Error("Неверный формат смен. Используйте 08:00-15:00:2.");
+      }
+      return {
+        id: `${dayIndex}-${start}-${end}-${index}`,
+        start,
+        end,
+        slots,
+      };
+    });
+};
+
+const parseSchedulePayload = (payload) => {
+  const bookingMode = payload.bookingMode === "manual" ? "manual" : "auto";
+  const bookingPeriod = payload.bookingPeriod === "monthly" ? "monthly" : "weekly";
+  const days = DAYS.map((day) => {
+    const open = (payload[`open_${day.index}`] || "").trim();
+    const close = (payload[`close_${day.index}`] || "").trim();
+    const shiftsRaw = (payload[`shifts_${day.index}`] || "").trim();
+    if (!open && !close && !shiftsRaw) {
+      return { dayIndex: day.index, open: "", close: "", shifts: [] };
+    }
+    if (!open || !close || !isValidTime(open) || !isValidTime(close)) {
+      throw new Error(`Укажите корректное время открытия и закрытия для дня ${day.label}.`);
+    }
+    const shifts = parseShifts(shiftsRaw, day.index);
+    return {
+      dayIndex: day.index,
+      open,
+      close,
+      shifts,
+    };
+  });
+  return { bookingMode, bookingPeriod, days };
+};
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (req.url === "/health") {
@@ -219,12 +497,6 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "GET" && url.pathname.startsWith("/owner/")) {
     const [, , ownerId, section] = url.pathname.split("/");
-    if (section !== "recipes") {
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("Not found");
-      return;
-    }
-
     const data = readData();
     const owner = data.owners.find((item) => item.id === ownerId);
     if (!owner) {
@@ -237,6 +509,22 @@ const server = http.createServer((req, res) => {
     if (!company) {
       res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderLogin("Компания не найдена."));
+      return;
+    }
+
+    if (section === "schedule") {
+      const schedule = normalizeSchedule(company);
+      const employees = data.employees.filter((employee) => employee.companyId === company.id);
+      const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+      const pendingBookings = companyBookings.filter((booking) => booking.status === "pending");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(renderSchedulePage(owner, company, employees, schedule, companyBookings, pendingBookings));
+      return;
+    }
+
+    if (section !== "recipes") {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
       return;
     }
 
@@ -268,12 +556,6 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "POST" && url.pathname.startsWith("/owner/")) {
     const [, , ownerId, section, action] = url.pathname.split("/");
-    if (section !== "recipes") {
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("Not found");
-      return;
-    }
-
     const data = readData();
     const owner = data.owners.find((item) => item.id === ownerId);
     if (!owner) {
@@ -285,6 +567,112 @@ const server = http.createServer((req, res) => {
     if (!company) {
       res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderLogin("Компания не найдена."));
+      return;
+    }
+
+    if (section === "schedule") {
+      parseBody(req, (payload) => {
+        if (action === "booking") {
+          const booking = data.bookings.find(
+            (item) => item.id === payload.bookingId && item.companyId === company.id
+          );
+          if (!booking) {
+            res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+            const employees = data.employees.filter((employee) => employee.companyId === company.id);
+            const companyBookings = data.bookings.filter((item) => item.companyId === company.id);
+            const pendingBookings = companyBookings.filter((item) => item.status === "pending");
+            res.end(
+              renderSchedulePage(
+                owner,
+                company,
+                employees,
+                normalizeSchedule(company),
+                companyBookings,
+                pendingBookings,
+                "Заявка не найдена."
+              )
+            );
+            return;
+          }
+
+          const schedule = normalizeSchedule(company);
+          const day = schedule.days.find((item) => item.dayIndex === booking.dayIndex);
+          const shift = day ? day.shifts.find((item) => item.id === booking.shiftId) : null;
+          if (payload.action === "approve" && shift) {
+            const approvedCount = data.bookings.filter(
+              (item) =>
+                item.companyId === company.id &&
+                item.shiftId === booking.shiftId &&
+                item.date === booking.date &&
+                item.status === "approved"
+            ).length;
+            if (approvedCount >= shift.slots) {
+              res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+              const employees = data.employees.filter((employee) => employee.companyId === company.id);
+              const companyBookings = data.bookings.filter((item) => item.companyId === company.id);
+              const pendingBookings = companyBookings.filter((item) => item.status === "pending");
+              res.end(
+                renderSchedulePage(
+                  owner,
+                  company,
+                  employees,
+                  schedule,
+                  companyBookings,
+                  pendingBookings,
+                  "Все слоты в смене уже заняты."
+                )
+              );
+              return;
+            }
+          }
+
+          updateData((draft) => {
+            const target = draft.bookings.find((item) => item.id === payload.bookingId);
+            if (target) {
+              target.status = payload.action === "approve" ? "approved" : "declined";
+            }
+            return draft;
+          });
+          res.writeHead(302, { Location: `/owner/${owner.id}/schedule` });
+          res.end();
+          return;
+        }
+
+        try {
+          const schedule = parseSchedulePayload(payload);
+          updateData((draft) => {
+            const targetCompany = draft.companies.find((item) => item.id === company.id);
+            if (targetCompany) {
+              targetCompany.scheduleConfig = schedule;
+            }
+            return draft;
+          });
+          res.writeHead(302, { Location: `/owner/${owner.id}/schedule` });
+          res.end();
+        } catch (error) {
+          const employees = data.employees.filter((employee) => employee.companyId === company.id);
+          const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+          const pendingBookings = companyBookings.filter((booking) => booking.status === "pending");
+          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(
+            renderSchedulePage(
+              owner,
+              company,
+              employees,
+              normalizeSchedule(company),
+              companyBookings,
+              pendingBookings,
+              error.message
+            )
+          );
+        }
+      });
+      return;
+    }
+
+    if (section !== "recipes") {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
       return;
     }
 
