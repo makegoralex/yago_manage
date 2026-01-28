@@ -365,10 +365,13 @@ const parseShifts = (value, dayIndex) => {
     .map((chunk) => chunk.trim())
     .filter(Boolean)
     .map((chunk, index) => {
-      const [range, slotsValue] = chunk.split(":").map((part) => part.trim());
-      const [start, end] = range ? range.split("-").map((part) => part.trim()) : [];
-      const slots = slotsValue ? Number.parseInt(slotsValue, 10) : 1;
-      if (!start || !end || !isValidTime(start) || !isValidTime(end) || Number.isNaN(slots) || slots < 1) {
+      const match = chunk.match(/^\s*(\d{2}:\d{2})-(\d{2}:\d{2})\s*:\s*(\d+)\s*$/);
+      if (!match) {
+        throw new Error("Неверный формат смен. Используйте 08:00-15:00:2.");
+      }
+      const [, start, end, slotsValue] = match;
+      const slots = Number.parseInt(slotsValue, 10);
+      if (!isValidTime(start) || !isValidTime(end) || Number.isNaN(slots) || slots < 1) {
         throw new Error("Неверный формат смен. Используйте 08:00-15:00:2.");
       }
       return {
