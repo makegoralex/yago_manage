@@ -18,6 +18,7 @@ const emptyData = {
   employees: [],
   companies: [],
   recipes: [],
+  bookings: [],
 };
 
 const ensureDatabase = () => {
@@ -45,6 +46,7 @@ const readData = () => {
     ...emptyData,
     ...parsed,
     recipes: parsed.recipes || [],
+    bookings: parsed.bookings || [],
   };
 };
 
