@@ -13,7 +13,7 @@ const sessions = new Map();
 
 const MAIN_MENU = {
   reply_markup: {
-    keyboard: [["Профиль", "Рецепты"], ["График"]],
+    keyboard: [["Профиль", "Рецепты"], ["График", "На смене"], ["Закончить смену"]],
     resize_keyboard: true,
   },
 };
@@ -55,6 +55,11 @@ const DEFAULT_SCHEDULE = {
   })),
 };
 
+const DEFAULT_REPORT_CONFIG = {
+  templates: [],
+  rules: [],
+};
+
 const createId = () =>
   `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
@@ -87,6 +92,16 @@ const normalizeSchedule = (company) => {
         shifts: Array.isArray(current.shifts) ? current.shifts : [],
       };
     }),
+  };
+};
+
+const normalizeReportConfig = (company) => {
+  if (!company || !company.reportConfig) {
+    return { ...DEFAULT_REPORT_CONFIG };
+  }
+  return {
+    templates: Array.isArray(company.reportConfig.templates) ? company.reportConfig.templates : [],
+    rules: Array.isArray(company.reportConfig.rules) ? company.reportConfig.rules : [],
   };
 };
 
@@ -136,6 +151,15 @@ const getDatesInRange = (start, end) => {
     cursor.setDate(cursor.getDate() + 1);
   }
   return dates;
+};
+
+const formatDateTime = (date) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const hours = `${date.getHours()}`.padStart(2, "0");
+  const minutes = `${date.getMinutes()}`.padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
 };
 
 const getSession = (userId) => {
@@ -345,6 +369,22 @@ const buildEmployeeBookingOptions = (bookings, schedule) =>
     return `${item.date} ${shiftLabel}`;
   });
 
+const getActiveShift = (data, companyId, employeeId) =>
+  data.shiftStatuses.find(
+    (item) =>
+      item.companyId === companyId &&
+      item.employeeId === employeeId &&
+      !item.endedAt
+  );
+
+const notifyOwnerReportStatus = (data, companyId, message) => {
+  const owner = data.owners.find((item) => item.companyId === companyId);
+  if (!owner || !owner.telegramId) {
+    return;
+  }
+  bot.sendMessage(owner.telegramId, message);
+};
+
 const notifyOwnerCancellation = (data, companyId, message) => {
   const owner = data.owners.find((item) => item.companyId === companyId);
   if (!owner || !owner.telegramId) {
@@ -389,6 +429,244 @@ const buildOwnerScheduleSummary = (bookings, schedule, employees) => {
       return `${date}\n${shiftLines}`;
     })
     .join("\n\n");
+};
+
+const createReportSubmission = (data, companyId, employeeId, rule, templateId, dueAt, status, shiftStatusId) =>
+  updateData((draft) => {
+    draft.reportSubmissions.push({
+      id: createId(),
+      companyId,
+      employeeId,
+      ruleId: rule.id,
+      templateId,
+      status,
+      dueAt: dueAt.toISOString(),
+      shiftStatusId,
+      date: new Date().toISOString(),
+      answers: [],
+      photos: [],
+    });
+    return draft;
+  });
+
+const ensurePendingReport = (data, companyId, employeeId, reportConfig) => {
+  const pending = data.reportSubmissions.find(
+    (item) =>
+      item.companyId === companyId &&
+      item.employeeId === employeeId &&
+      (item.status === "pending" || item.status === "pending_late")
+  );
+  if (pending) {
+    return pending;
+  }
+
+  const activeShift = getActiveShift(data, companyId, employeeId);
+  if (!activeShift) {
+    return null;
+  }
+
+  const rules = reportConfig.rules;
+  const now = new Date();
+
+  const createIfDue = (rule, baseTime) => {
+    const template = reportConfig.templates.find((item) => item.id === rule.templateId);
+    if (!template) {
+      return null;
+    }
+    const submissions = data.reportSubmissions.filter(
+      (item) =>
+        item.companyId === companyId &&
+        item.employeeId === employeeId &&
+        item.ruleId === rule.id &&
+        item.shiftStatusId === activeShift.id &&
+        item.status !== "cancelled"
+    );
+    if (submissions.some((item) => item.status === "pending" || item.status === "pending_late")) {
+      return null;
+    }
+    if (rule.trigger !== "periodic" && submissions.length) {
+      return null;
+    }
+    const dueAt = new Date(baseTime.getTime() + rule.offsetMinutes * 60000);
+    if (now < dueAt) {
+      return null;
+    }
+    const windowMinutes = rule.windowMinutes || 0;
+    const isLate = windowMinutes ? now > new Date(dueAt.getTime() + windowMinutes * 60000) : false;
+    const created = createReportSubmission(
+      data,
+      companyId,
+      employeeId,
+      rule,
+      template.id,
+      dueAt,
+      isLate ? "pending_late" : "pending",
+      activeShift.id
+    );
+    return created.reportSubmissions[created.reportSubmissions.length - 1];
+  };
+
+  const startRules = rules.filter((rule) => rule.trigger === "start");
+  for (const rule of startRules) {
+    const submission = createIfDue(rule, new Date(activeShift.startedAt));
+    if (submission) {
+      return submission;
+    }
+  }
+
+  if (activeShift.endedAt) {
+    const endRules = rules.filter((rule) => rule.trigger === "end");
+    for (const rule of endRules) {
+      const submission = createIfDue(rule, new Date(activeShift.endedAt));
+      if (submission) {
+        return submission;
+      }
+    }
+  }
+
+  const periodicRules = rules.filter((rule) => rule.trigger === "periodic");
+  for (const rule of periodicRules) {
+    const template = reportConfig.templates.find((item) => item.id === rule.templateId);
+    if (!template) {
+      continue;
+    }
+    const submissions = data.reportSubmissions.filter(
+      (item) =>
+        item.companyId === companyId &&
+        item.employeeId === employeeId &&
+        item.ruleId === rule.id &&
+        item.shiftStatusId === activeShift.id &&
+        item.status !== "cancelled"
+    );
+    const lastSubmission = submissions
+      .filter((item) => item.submittedAt)
+      .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt))[0];
+    const baseTime = lastSubmission ? new Date(lastSubmission.submittedAt) : new Date(activeShift.startedAt);
+    const dueAt = new Date(baseTime.getTime() + rule.intervalMinutes * 60000);
+    if (now >= dueAt) {
+      const windowMinutes = rule.windowMinutes || 0;
+      const isLate = windowMinutes ? now > new Date(dueAt.getTime() + windowMinutes * 60000) : false;
+      const created = createReportSubmission(
+        data,
+        companyId,
+        employeeId,
+        rule,
+        template.id,
+        dueAt,
+        isLate ? "pending_late" : "pending",
+        activeShift.id
+      );
+      return created.reportSubmissions[created.reportSubmissions.length - 1];
+    }
+  }
+  return null;
+};
+
+const handleReportFlow = (session, msg, data, companyId, employeeId) => {
+  const chatId = msg.chat.id;
+  const submissionId = session.reportSubmissionId;
+  if (!submissionId || !session.reportTemplate) {
+    return false;
+  }
+  const template = session.reportTemplate;
+
+  if (session.step === "report-item") {
+    if (!msg.text) {
+      bot.sendMessage(chatId, "Ответьте текстом на пункт чек-листа.");
+      return true;
+    }
+    session.reportAnswers.push(msg.text.trim());
+    session.reportIndex += 1;
+    if (session.reportIndex < template.items.length) {
+      bot.sendMessage(chatId, template.items[session.reportIndex]);
+      return true;
+    }
+    if (template.requirePhoto) {
+      session.step = "report-photo";
+      bot.sendMessage(chatId, "Пришлите фотоотчёт.");
+      return true;
+    }
+    const submittedAt = new Date().toISOString();
+    let finalStatus = "submitted";
+    updateData((draft) => {
+      const target = draft.reportSubmissions.find((item) => item.id === submissionId);
+      if (target) {
+        target.answers = session.reportAnswers;
+        finalStatus = target.status === "pending_late" ? "late" : "submitted";
+        target.status = finalStatus;
+        target.submittedAt = submittedAt;
+      }
+      return draft;
+    });
+    notifyOwnerReportStatus(
+      data,
+      companyId,
+      `Отчёт сотрудника отправлен: ${template.name}. Статус: ${finalStatus}.`
+    );
+    bot.sendMessage(chatId, "Отчёт отправлен. Спасибо!");
+    session.view = null;
+    session.step = null;
+    session.reportSubmissionId = null;
+    session.reportTemplate = null;
+    session.reportAnswers = null;
+    session.reportIndex = null;
+    sendEmployeeMenu(chatId);
+    return true;
+  }
+
+  if (session.step === "report-photo") {
+    if (!msg.photo || !msg.photo.length) {
+      bot.sendMessage(chatId, "Нужно отправить фото.");
+      return true;
+    }
+    const fileId = msg.photo[msg.photo.length - 1].file_id;
+    const submittedAt = new Date().toISOString();
+    let finalStatus = "submitted";
+    updateData((draft) => {
+      const target = draft.reportSubmissions.find((item) => item.id === submissionId);
+      if (target) {
+        target.answers = session.reportAnswers;
+        target.photos = [fileId];
+        finalStatus = target.status === "pending_late" ? "late" : "submitted";
+        target.status = finalStatus;
+        target.submittedAt = submittedAt;
+      }
+      return draft;
+    });
+    notifyOwnerReportStatus(
+      data,
+      companyId,
+      `Отчёт сотрудника с фото отправлен: ${template.name}. Статус: ${finalStatus}.`
+    );
+    bot.sendMessage(chatId, "Отчёт отправлен. Спасибо!");
+    session.view = null;
+    session.step = null;
+    session.reportSubmissionId = null;
+    session.reportTemplate = null;
+    session.reportAnswers = null;
+    session.reportIndex = null;
+    sendEmployeeMenu(chatId);
+    return true;
+  }
+
+  return false;
+};
+
+const startReportFlow = (session, chatId, reportConfig, submission) => {
+  const template = reportConfig.templates.find((item) => item.id === submission.templateId);
+  if (!template) {
+    bot.sendMessage(chatId, "Шаблон отчёта не найден.");
+    return false;
+  }
+  session.view = "report";
+  session.step = "report-item";
+  session.reportSubmissionId = submission.id;
+  session.reportTemplate = template;
+  session.reportAnswers = [];
+  session.reportIndex = 0;
+  bot.sendMessage(chatId, `Отчёт: ${template.name}\nОтветьте на чек-лист.`);
+  bot.sendMessage(chatId, template.items[0]);
+  return true;
 };
 
 const startScheduleFlow = (session, chatId, data, companyId, employeeId) => {
@@ -631,19 +909,40 @@ bot.onText(/\/start/, (msg) => {
 });
 
 bot.on("message", (msg) => {
-  if (!msg.text || msg.text.startsWith("/")) {
+  const hasText = typeof msg.text === "string";
+  const hasPhoto = msg.photo && msg.photo.length;
+  if ((!hasText && !hasPhoto) || (hasText && msg.text.startsWith("/"))) {
     return;
   }
 
   const chatId = msg.chat.id;
   const telegramId = msg.from.id;
-  const text = msg.text.trim();
+  const text = hasText ? msg.text.trim() : "";
   const session = getSession(telegramId);
   const data = readData();
 
   const existingEmployee = findEmployeeByTelegramId(data, telegramId);
   const existingOwner = existingEmployee ? null : findOwnerByTelegramId(data, telegramId);
   if (existingEmployee) {
+    const company = data.companies.find((item) => item.id === existingEmployee.companyId);
+    const reportConfig = normalizeReportConfig(company);
+    if (session.view === "report") {
+      if (handleReportFlow(session, msg, data, existingEmployee.companyId, existingEmployee.id)) {
+        return;
+      }
+    }
+    const pendingReport = ensurePendingReport(
+      data,
+      existingEmployee.companyId,
+      existingEmployee.id,
+      reportConfig
+    );
+    if (pendingReport) {
+      if (session.view !== "report") {
+        startReportFlow(session, chatId, reportConfig, pendingReport);
+      }
+      return;
+    }
     if (session.view === "recipes") {
       if (
         handleRecipeNavigation(
@@ -674,7 +973,6 @@ bot.on("message", (msg) => {
     }
 
     if (text === "Профиль") {
-      const company = data.companies.find((item) => item.id === existingEmployee.companyId);
       const companyName = company ? company.name : "(не найдена)";
       bot.sendMessage(
         chatId,
@@ -686,6 +984,63 @@ bot.on("message", (msg) => {
 
     if (text === "Рецепты") {
       startRecipeFlow(session, chatId, data, existingEmployee.companyId);
+      return;
+    }
+
+    if (text === "На смене") {
+      const activeShift = getActiveShift(data, existingEmployee.companyId, existingEmployee.id);
+      if (activeShift) {
+        bot.sendMessage(chatId, "Смена уже начата.");
+        return;
+      }
+      updateData((draft) => {
+        draft.shiftStatuses.push({
+          id: createId(),
+          companyId: existingEmployee.companyId,
+          employeeId: existingEmployee.id,
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+        });
+        return draft;
+      });
+      bot.sendMessage(chatId, "Смена начата. Проверьте отчёты.");
+      const refreshed = readData();
+      const pending = ensurePendingReport(
+        refreshed,
+        existingEmployee.companyId,
+        existingEmployee.id,
+        reportConfig
+      );
+      if (pending) {
+        startReportFlow(session, chatId, reportConfig, pending);
+      }
+      return;
+    }
+
+    if (text === "Закончить смену") {
+      const activeShift = getActiveShift(data, existingEmployee.companyId, existingEmployee.id);
+      if (!activeShift) {
+        bot.sendMessage(chatId, "У вас нет активной смены.");
+        return;
+      }
+      updateData((draft) => {
+        const target = draft.shiftStatuses.find((item) => item.id === activeShift.id);
+        if (target) {
+          target.endedAt = new Date().toISOString();
+        }
+        return draft;
+      });
+      bot.sendMessage(chatId, "Смена завершена. Проверьте отчёты.");
+      const refreshed = readData();
+      const pending = ensurePendingReport(
+        refreshed,
+        existingEmployee.companyId,
+        existingEmployee.id,
+        reportConfig
+      );
+      if (pending) {
+        startReportFlow(session, chatId, reportConfig, pending);
+      }
       return;
     }
 

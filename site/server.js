@@ -23,6 +23,11 @@ const DEFAULT_SCHEDULE = {
   })),
 };
 
+const DEFAULT_REPORT_CONFIG = {
+  templates: [],
+  rules: [],
+};
+
 const renderLayout = (title, body) => `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -79,6 +84,7 @@ const renderDashboard = (company, employees, owner) =>
       <p class="muted">Инвайт-код: ${company.inviteCode}</p>
       <p><a href="/owner/${owner.id}/recipes">Управление рецептами</a></p>
       <p><a href="/owner/${owner.id}/schedule">График работы и смены</a></p>
+      <p><a href="/owner/${owner.id}/reports">Контроль работы</a></p>
       <h2>Сотрудники</h2>
       ${
         employees.length
@@ -109,6 +115,17 @@ const normalizeSchedule = (company) => {
     bookingMode: existing.bookingMode === "manual" ? "manual" : "auto",
     bookingPeriod: existing.bookingPeriod === "monthly" ? "monthly" : "weekly",
     days,
+  };
+};
+
+const normalizeReportConfig = (company) => {
+  if (!company.reportConfig) {
+    return { ...DEFAULT_REPORT_CONFIG };
+  }
+  const existing = company.reportConfig;
+  return {
+    templates: Array.isArray(existing.templates) ? existing.templates : [],
+    rules: Array.isArray(existing.rules) ? existing.rules : [],
   };
 };
 
@@ -282,6 +299,127 @@ const renderSchedulePage = (owner, company, employees, schedule, bookings, pendi
       <p class="muted"><a href="/">Выйти</a></p>
     </div>`
   );
+
+const renderReportTemplates = (templates) => {
+  if (!templates.length) {
+    return "<p class=\"muted\">Шаблоны пока не добавлены.</p>";
+  }
+  return `<ul>${templates
+    .map(
+      (template) =>
+        `<li><strong>${template.name}</strong> (${template.requirePhoto ? "фото" : "без фото"})<br/><span class="muted">Чек-лист: ${template.items.join(
+          ", "
+        )}</span></li>`
+    )
+    .join("")}</ul>`;
+};
+
+const renderReportRules = (rules, templates) => {
+  if (!rules.length) {
+    return "<p class=\"muted\">Правила отчётности пока не заданы.</p>";
+  }
+  const templateName = (id) => {
+    const template = templates.find((item) => item.id === id);
+    return template ? template.name : "не найден";
+  };
+  return `<ul>${rules
+    .map((rule) => {
+      const timing =
+        rule.trigger === "periodic"
+          ? `каждые ${rule.intervalMinutes} мин., окно ${rule.windowMinutes} мин.`
+          : `через ${rule.offsetMinutes} мин.`;
+      const triggerLabel =
+        rule.trigger === "start" ? "Начало смены" : rule.trigger === "end" ? "Конец смены" : "В течение смены";
+      return `<li><strong>${rule.name}</strong> (${triggerLabel}, ${timing}) — шаблон: ${templateName(rule.templateId)}</li>`;
+    })
+    .join("")}</ul>`;
+};
+
+const renderReportSubmissions = (submissions, employees, templates) => {
+  if (!submissions.length) {
+    return "<p class=\"muted\">Отчётов за последние 14 дней нет.</p>";
+  }
+  const rows = submissions
+    .map((submission) => {
+      const employee = employees.find((item) => item.id === submission.employeeId);
+      const template = templates.find((item) => item.id === submission.templateId);
+      const answers = submission.answers && submission.answers.length ? submission.answers.join("; ") : "—";
+      const photos = submission.photos && submission.photos.length ? submission.photos.join(", ") : "—";
+      return `
+        <tr>
+          <td>${submission.date}</td>
+          <td>${employee ? employee.name : "Неизвестный"}</td>
+          <td>${template ? template.name : "Шаблон удалён"}</td>
+          <td><span class="pill">${submission.status}</span></td>
+          <td>${answers}</td>
+          <td>${photos}</td>
+        </tr>
+      `;
+    })
+    .join("");
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Сотрудник</th>
+          <th>Шаблон</th>
+          <th>Статус</th>
+          <th>Ответы</th>
+          <th>Фото</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+};
+
+const renderReportsPage = (owner, company, employees, reportConfig, submissions, error) => {
+  const templateOptions = reportConfig.templates
+    .map((template) => `<option value="${template.id}">${template.name}</option>`)
+    .join("");
+  return renderLayout(
+    "Контроль работы",
+    `<div class="card">
+      <h1>Контроль работы: ${company.name}</h1>
+      ${error ? `<div class="error">${error}</div>` : ""}
+      <h2>Шаблоны отчётов</h2>
+      <form method="POST" action="/owner/${owner.id}/reports/templates">
+        <label>Название шаблона</label>
+        <input type="text" name="templateName" required />
+        <label>Чек-лист (через запятую)</label>
+        <input type="text" name="templateItems" placeholder="Пришёл вовремя, Одежда, Касса" required />
+        <label><input type="checkbox" name="templatePhoto" value="yes" /> Требуется фото</label>
+        <button type="submit">Добавить шаблон</button>
+      </form>
+      ${renderReportTemplates(reportConfig.templates)}
+      <h2>Правила отчётности</h2>
+      <form method="POST" action="/owner/${owner.id}/reports/rules">
+        <label>Название правила</label>
+        <input type="text" name="ruleName" required />
+        <label>Шаблон</label>
+        <select name="ruleTemplate" required>
+          ${templateOptions || "<option value=\"\">Нет шаблонов</option>"}
+        </select>
+        <label>Когда отправлять</label>
+        <select name="ruleTrigger">
+          <option value="start">Начало смены</option>
+          <option value="periodic">В течение смены</option>
+          <option value="end">Конец смены</option>
+        </select>
+        <label>Смещение или интервал (мин)</label>
+        <input type="number" name="ruleInterval" value="0" min="0" />
+        <label>Окно отправки (мин) для периодических</label>
+        <input type="number" name="ruleWindow" value="15" min="5" />
+        <button type="submit">Добавить правило</button>
+      </form>
+      ${renderReportRules(reportConfig.rules, reportConfig.templates)}
+      <h2>Отчёты за 14 дней</h2>
+      ${renderReportSubmissions(submissions, employees, reportConfig.templates)}
+      <p class="muted"><a href="/">Выйти</a></p>
+    </div>`
+  );
+};
 
 const buildRecipeTree = (recipes, parentId = null) =>
   recipes
@@ -522,6 +660,20 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    if (section === "reports") {
+      const reportConfig = normalizeReportConfig(company);
+      const employees = data.employees.filter((employee) => employee.companyId === company.id);
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 14);
+      const submissions = data.reportSubmissions.filter(
+        (submission) =>
+          submission.companyId === company.id && new Date(submission.date) >= cutoff
+      );
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(renderReportsPage(owner, company, employees, reportConfig, submissions));
+      return;
+    }
+
     if (section !== "recipes") {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");
@@ -666,6 +818,99 @@ const server = http.createServer((req, res) => {
             )
           );
         }
+      });
+      return;
+    }
+
+    if (section === "reports") {
+      parseBody(req, (payload) => {
+        const reportConfig = normalizeReportConfig(company);
+        const employees = data.employees.filter((employee) => employee.companyId === company.id);
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - 14);
+        const submissions = data.reportSubmissions.filter(
+          (submission) =>
+            submission.companyId === company.id && new Date(submission.date) >= cutoff
+        );
+
+        const renderError = (message) => {
+          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(renderReportsPage(owner, company, employees, reportConfig, submissions, message));
+        };
+
+        if (action === "templates") {
+          const name = (payload.templateName || "").trim();
+          const items = (payload.templateItems || "")
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+          const requirePhoto = payload.templatePhoto === "yes";
+          if (!name || !items.length) {
+            renderError("Заполните название и чек-лист.");
+            return;
+          }
+          updateData((draft) => {
+            const targetCompany = draft.companies.find((item) => item.id === company.id);
+            if (targetCompany) {
+              const nextConfig = normalizeReportConfig(targetCompany);
+              nextConfig.templates.push({
+                id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+                name,
+                items,
+                requirePhoto,
+              });
+              targetCompany.reportConfig = nextConfig;
+            }
+            return draft;
+          });
+          res.writeHead(302, { Location: `/owner/${owner.id}/reports` });
+          res.end();
+          return;
+        }
+
+        if (action === "rules") {
+          const name = (payload.ruleName || "").trim();
+          const templateId = payload.ruleTemplate;
+          const trigger = payload.ruleTrigger;
+          const interval = Number.parseInt(payload.ruleInterval, 10);
+          const window = Number.parseInt(payload.ruleWindow, 10);
+          if (!name || !templateId) {
+            renderError("Выберите шаблон и задайте название правила.");
+            return;
+          }
+          const safeTrigger = ["start", "end", "periodic"].includes(trigger) ? trigger : "start";
+          if (Number.isNaN(interval) || interval < 0) {
+            renderError("Интервал или смещение должно быть числом.");
+            return;
+          }
+          if (safeTrigger === "periodic" && (Number.isNaN(window) || window < 5)) {
+            renderError("Окно отправки должно быть не меньше 5 минут.");
+            return;
+          }
+          updateData((draft) => {
+            const targetCompany = draft.companies.find((item) => item.id === company.id);
+            if (targetCompany) {
+              const nextConfig = normalizeReportConfig(targetCompany);
+              nextConfig.rules.push({
+                id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+                name,
+                templateId,
+                trigger: safeTrigger,
+                offsetMinutes: safeTrigger === "periodic" ? 0 : interval,
+                intervalMinutes: safeTrigger === "periodic" ? Math.max(interval, 1) : 0,
+                windowMinutes: safeTrigger === "periodic" ? Math.max(window, 5) : 0,
+              });
+              targetCompany.reportConfig = nextConfig;
+            }
+            return draft;
+          });
+          res.writeHead(302, { Location: `/owner/${owner.id}/reports` });
+          res.end();
+          return;
+        }
+
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not found");
       });
       return;
     }
