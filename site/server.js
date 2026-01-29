@@ -109,6 +109,8 @@ const renderLayout = (title, body) => `<!DOCTYPE html>
     .row { display: flex; gap: 12px; flex-wrap: wrap; }
     .row > * { flex: 1; min-width: 160px; }
     .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #f1f2f6; font-size: 12px; }
+    .pill.success { background: #dcfce7; color: #166534; }
+    .pill.warning { background: #fee2e2; color: #991b1b; }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .page-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
     .menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 16px 0 8px; }
@@ -157,7 +159,67 @@ const renderLogin = (error) =>
     </div>`
   );
 
-const renderDashboard = (company, employees, owner) =>
+const renderCompanyForm = (owner, company, error) => `
+  <h2>Организация</h2>
+  ${error ? `<div class="error">${error}</div>` : ""}
+  <form method="POST" action="/owner/${owner.id}/company">
+    <label>Название</label>
+    <input type="text" name="companyName" value="${company.name || ""}" required />
+    <label>Инвайт-код</label>
+    <input type="text" name="inviteCode" value="${company.inviteCode || ""}" required />
+    <p class="muted" style="margin-top:6px;">Инвайт-код нужен сотрудникам для подключения через бота.</p>
+    <button type="submit">Сохранить организацию</button>
+  </form>
+`;
+
+const renderEmployeeOverview = (owner, employees, bookings) => {
+  if (!employees.length) {
+    return "<p>Сотрудников пока нет.</p>";
+  }
+  const rows = employees
+    .map((employee) => {
+      const employeeBookings = bookings.filter((booking) => booking.employeeId === employee.id);
+      const approved = employeeBookings.filter((booking) => booking.status === "approved").length;
+      const pending = employeeBookings.filter((booking) => booking.status === "pending").length;
+      const status = employee.active === false ? "Уволен" : "Активен";
+      const statusClass = employee.active === false ? "warning" : "success";
+      const toggleLabel = employee.active === false ? "Вернуть" : "Уволить";
+      return `
+        <tr>
+          <td>${employee.name}</td>
+          <td><span class="pill ${statusClass}">${status}</span></td>
+          <td>${employeeBookings.length}</td>
+          <td>${approved}</td>
+          <td>${pending}</td>
+          <td>
+            <form method="POST" action="/owner/${owner.id}/employees/toggle">
+              <input type="hidden" name="employeeId" value="${employee.id}" />
+              <button type="submit" class="button secondary">${toggleLabel}</button>
+            </form>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Сотрудник</th>
+          <th>Статус</th>
+          <th>Смен всего</th>
+          <th>Подтверждённые</th>
+          <th>В ожидании</th>
+          <th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="muted" style="margin-top:8px;">Смены считаются по заявкам в графике. Статистика будет расширяться.</p>
+  `;
+};
+
+const renderDashboard = (company, employees, owner, bookings, companyError) =>
   renderLayout(
     "Кабинет владельца",
     `<div class="card">
@@ -178,12 +240,9 @@ const renderDashboard = (company, employees, owner) =>
           <span class="muted">Шаблоны и отчётность сотрудников.</span>
         </a>
       </div>
+      ${renderCompanyForm(owner, company, companyError)}
       <h2>Сотрудники</h2>
-      ${
-        employees.length
-          ? `<ul>${employees.map((emp) => `<li>${emp.name}</li>`).join("")}</ul>`
-          : "<p>Сотрудников пока нет.</p>"
-      }
+      ${renderEmployeeOverview(owner, employees, bookings)}
     </div>`
   );
 
@@ -779,7 +838,8 @@ const server = http.createServer((req, res) => {
         (employee) => employee.companyId === company.id
       );
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderDashboard(company, employees, owner));
+      const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+      res.end(renderDashboard(company, employees, owner, companyBookings));
     });
     return;
   }
@@ -804,7 +864,8 @@ const server = http.createServer((req, res) => {
     if (!section) {
       const employees = data.employees.filter((employee) => employee.companyId === company.id);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderDashboard(company, employees, owner));
+      const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+      res.end(renderDashboard(company, employees, owner, companyBookings));
       return;
     }
 
@@ -877,6 +938,72 @@ const server = http.createServer((req, res) => {
     if (!company) {
       res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderLogin("Компания не найдена."));
+      return;
+    }
+
+    if (section === "company") {
+      parseBody(req, (payload) => {
+        const name = (payload.companyName || "").trim();
+        const inviteCode = (payload.inviteCode || "").trim();
+        if (!name || !inviteCode) {
+          const employees = data.employees.filter((employee) => employee.companyId === company.id);
+          const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(
+            renderDashboard(
+              company,
+              employees,
+              owner,
+              companyBookings,
+              "Заполните название и инвайт-код."
+            )
+          );
+          return;
+        }
+        updateData((draft) => {
+          const target = draft.companies.find((item) => item.id === company.id);
+          if (target) {
+            target.name = name;
+            target.inviteCode = inviteCode;
+          }
+          return draft;
+        });
+        res.writeHead(302, { Location: `/owner/${owner.id}` });
+        res.end();
+      });
+      return;
+    }
+
+    if (section === "employees" && action === "toggle") {
+      parseBody(req, (payload) => {
+        const employee = data.employees.find(
+          (item) => item.id === payload.employeeId && item.companyId === company.id
+        );
+        if (!employee) {
+          const employees = data.employees.filter((item) => item.companyId === company.id);
+          const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+          res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(
+            renderDashboard(
+              company,
+              employees,
+              owner,
+              companyBookings,
+              "Сотрудник не найден."
+            )
+          );
+          return;
+        }
+        updateData((draft) => {
+          const target = draft.employees.find((item) => item.id === employee.id);
+          if (target) {
+            target.active = target.active === false;
+          }
+          return draft;
+        });
+        res.writeHead(302, { Location: `/owner/${owner.id}` });
+        res.end();
+      });
       return;
     }
 
