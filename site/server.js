@@ -247,6 +247,7 @@ const formatShiftInputValue = (day) =>
 
 const renderScheduleForm = (owner, schedule, error) => `
   <h2>Настройка графика</h2>
+  <p class="muted">Сначала настройте один день, затем примените эти значения к другим дням (например, ко всем будням).</p>
   ${error ? `<div class="error">${error}</div>` : ""}
   <form method="POST" action="/owner/${owner.id}/schedule">
     <label>Режим бронирования</label>
@@ -259,6 +260,28 @@ const renderScheduleForm = (owner, schedule, error) => `
       <option value="weekly" ${schedule.bookingPeriod === "weekly" ? "selected" : ""}>Раз в неделю</option>
       <option value="monthly" ${schedule.bookingPeriod === "monthly" ? "selected" : ""}>Раз в месяц</option>
     </select>
+    <div class="card" style="background:#f8fafc;border:1px solid var(--border);margin-top:16px;padding:16px;">
+      <strong>Быстрое применение</strong>
+      <p class="muted" style="margin-top:6px;">Выберите день-источник и отметьте дни, куда скопировать время и смены.</p>
+      <div class="row">
+        <div>
+          <label>День-источник</label>
+          <select id="copy-source">
+            ${DAYS.map((day) => `<option value="${day.index}">${day.label}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label>Скопировать в дни</label>
+          <div class="row">
+            ${DAYS.map(
+              (day) =>
+                `<label class="muted" style="font-weight:500;"><input type="checkbox" data-copy-target="${day.index}" /> ${day.label}</label>`
+            ).join("")}
+          </div>
+        </div>
+      </div>
+      <button type="button" class="button secondary" id="copy-apply">Применить ко выбранным дням</button>
+    </div>
     <h3>Дни недели</h3>
     ${DAYS.map((dayMeta) => {
       const day = schedule.days.find((item) => item.dayIndex === dayMeta.index);
@@ -268,20 +291,40 @@ const renderScheduleForm = (owner, schedule, error) => `
           <div class="row">
             <div>
               <label>Открытие</label>
-              <input type="text" name="open_${dayMeta.index}" value="${day.open || ""}" placeholder="08:00" />
+              <input type="time" name="open_${dayMeta.index}" value="${day.open || ""}" placeholder="08:00" />
             </div>
             <div>
               <label>Закрытие</label>
-              <input type="text" name="close_${dayMeta.index}" value="${day.close || ""}" placeholder="21:00" />
+              <input type="time" name="close_${dayMeta.index}" value="${day.close || ""}" placeholder="21:00" />
             </div>
           </div>
           <label>Смены (формат: 08:00-15:00:2, 14:00-21:00:1)</label>
           <input type="text" name="shifts_${dayMeta.index}" value="${formatShiftInputValue(day)}" />
+          <p class="muted" style="margin-top:6px;">Каждая смена: время начала-окончания и количество мест через двоеточие.</p>
         </div>
       `;
     }).join("")}
     <button type="submit">Сохранить график</button>
   </form>
+  <script>
+    (function () {
+      const applyButton = document.getElementById("copy-apply");
+      if (!applyButton) return;
+      applyButton.addEventListener("click", () => {
+        const sourceIndex = document.getElementById("copy-source").value;
+        const sourceOpen = document.querySelector(\`input[name="open_\${sourceIndex}"]\`).value;
+        const sourceClose = document.querySelector(\`input[name="close_\${sourceIndex}"]\`).value;
+        const sourceShifts = document.querySelector(\`input[name="shifts_\${sourceIndex}"]\`).value;
+        document.querySelectorAll("[data-copy-target]").forEach((checkbox) => {
+          if (!checkbox.checked) return;
+          const targetIndex = checkbox.getAttribute("data-copy-target");
+          document.querySelector(\`input[name="open_\${targetIndex}"]\`).value = sourceOpen;
+          document.querySelector(\`input[name="close_\${targetIndex}"]\`).value = sourceClose;
+          document.querySelector(\`input[name="shifts_\${targetIndex}"]\`).value = sourceShifts;
+        });
+      });
+    })();
+  </script>
 `;
 
 const renderPendingBookings = (owner, bookings, employees, schedule) => {
@@ -477,12 +520,21 @@ const renderReportsPage = (owner, company, employees, reportConfig, submissions,
       ${renderOwnerNav(owner)}
       <h1>Контроль работы: ${company.name}</h1>
       ${error ? `<div class="error">${error}</div>` : ""}
+      <div class="card" style="background:#f8fafc;border:1px solid var(--border);margin-top:12px;padding:16px;">
+        <strong>Как настроить контроль</strong>
+        <ol class="muted" style="margin-top:8px;">
+          <li>Создайте шаблон отчёта: список пунктов, по которым сотрудник должен отчитаться.</li>
+          <li>Создайте правило: когда отправлять отчёт (начало/конец/в течение смены).</li>
+          <li>Сотрудник получит напоминание и заполнит отчёт по выбранному шаблону.</li>
+        </ol>
+      </div>
       <h2>Шаблоны отчётов</h2>
       <form method="POST" action="/owner/${owner.id}/reports/templates">
         <label>Название шаблона</label>
         <input type="text" name="templateName" required />
         <label>Чек-лист (через запятую)</label>
         <input type="text" name="templateItems" placeholder="Пришёл вовремя, Одежда, Касса" required />
+        <p class="muted" style="margin-top:6px;">Пример: “Пришёл вовремя, Форма, Чистота рабочей зоны”.</p>
         <label><input type="checkbox" name="templatePhoto" value="yes" /> Требуется фото</label>
         <button type="submit">Добавить шаблон</button>
       </form>
@@ -495,6 +547,7 @@ const renderReportsPage = (owner, company, employees, reportConfig, submissions,
         <select name="ruleTemplate" required>
           ${templateOptions || "<option value=\"\">Нет шаблонов</option>"}
         </select>
+        <p class="muted" style="margin-top:6px;">Выберите, по какому шаблону сотрудник будет отчитываться.</p>
         <label>Когда отправлять</label>
         <select name="ruleTrigger">
           <option value="start">Начало смены</option>
@@ -505,6 +558,10 @@ const renderReportsPage = (owner, company, employees, reportConfig, submissions,
         <input type="number" name="ruleInterval" value="0" min="0" />
         <label>Окно отправки (мин) для периодических</label>
         <input type="number" name="ruleWindow" value="15" min="5" />
+        <p class="muted" style="margin-top:6px;">
+          <strong>Подсказка:</strong> для начала/конца смены укажите смещение (например, 10 — отправить через 10 минут).
+          Для “В течение смены” укажите интервал (например, 120 — каждые 2 часа) и окно (например, 15 минут).
+        </p>
         <button type="submit">Добавить правило</button>
       </form>
       ${renderReportRules(reportConfig.rules, reportConfig.templates)}
