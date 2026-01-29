@@ -20,7 +20,10 @@ const MAIN_MENU = {
 
 const ROLE_MENU = {
   reply_markup: {
-    keyboard: [["Я владелец", "Я сотрудник"], ["Вход"]],
+    keyboard: [
+      ["Регистрация владельца", "Регистрация сотрудника"],
+      ["Вход владельца", "Вход сотрудника"],
+    ],
     resize_keyboard: true,
     one_time_keyboard: true,
   },
@@ -179,8 +182,18 @@ const findOwnerByTelegramId = (data, telegramId) =>
 const findEmployeeByTelegramId = (data, telegramId) =>
   data.employees.find((employee) => employee.telegramId === telegramId);
 
-const sendEmployeeMenu = (chatId) => {
+const sendEmployeeMenu = (chatId, session) => {
+  if (session) {
+    session.role = "employee_menu";
+  }
   bot.sendMessage(chatId, "Выберите раздел:", MAIN_MENU);
+};
+
+const sendOwnerMenu = (chatId, session) => {
+  if (session) {
+    session.role = "owner_menu";
+  }
+  bot.sendMessage(chatId, "Раздел владельца:", OWNER_MENU);
 };
 
 const buildRecipeKeyboard = (items, includeBack) => {
@@ -922,7 +935,75 @@ bot.on("message", (msg) => {
   const data = readData();
 
   const existingEmployee = findEmployeeByTelegramId(data, telegramId);
-  const existingOwner = existingEmployee ? null : findOwnerByTelegramId(data, telegramId);
+  const existingOwner = findOwnerByTelegramId(data, telegramId);
+
+  if (
+    text === "Регистрация владельца" ||
+    text === "Я владелец" ||
+    text === "Регистрация сотрудника" ||
+    text === "Я сотрудник" ||
+    text === "Вход владельца" ||
+    text === "Вход" ||
+    text === "Вход сотрудника"
+  ) {
+    if (text === "Регистрация владельца" || text === "Я владелец") {
+      session.role = "owner";
+      session.step = "company";
+      session.data = {};
+      bot.sendMessage(chatId, "Введите название компании:");
+      return;
+    }
+
+    if (text === "Регистрация сотрудника" || text === "Я сотрудник") {
+      if (existingEmployee) {
+        sendEmployeeMenu(chatId, session);
+        return;
+      }
+      session.role = "employee";
+      session.step = "invite";
+      session.data = {};
+      bot.sendMessage(chatId, "Введите инвайт-код компании:");
+      return;
+    }
+
+    if (text === "Вход владельца" || text === "Вход") {
+      if (existingOwner) {
+        sendOwnerMenu(chatId, session);
+        return;
+      }
+      session.role = "login_owner";
+      session.step = "login";
+      session.data = {};
+      bot.sendMessage(chatId, "Введите логин владельца:");
+      return;
+    }
+
+    if (text === "Вход сотрудника") {
+      if (existingEmployee) {
+        sendEmployeeMenu(chatId, session);
+        return;
+      }
+      bot.sendMessage(chatId, "Вы ещё не зарегистрированы. Выберите регистрацию:", ROLE_MENU);
+      return;
+    }
+  }
+
+  if (session.role === "owner_menu" && existingOwner) {
+    if (text === "В меню") {
+      sendOwnerMenu(chatId, session);
+      return;
+    }
+
+    if (text === "График") {
+      const company = data.companies.find((item) => item.id === existingOwner.companyId);
+      const schedule = normalizeSchedule(company);
+      const employees = data.employees.filter((item) => item.companyId === existingOwner.companyId);
+      const bookings = data.bookings.filter((item) => item.companyId === existingOwner.companyId);
+      const summary = buildOwnerScheduleSummary(bookings, schedule, employees);
+      bot.sendMessage(chatId, `Расписание смен:\n${summary}`, OWNER_MENU);
+      return;
+    }
+  }
   if (existingEmployee) {
     const company = data.companies.find((item) => item.id === existingEmployee.companyId);
     const reportConfig = normalizeReportConfig(company);
@@ -1050,14 +1131,14 @@ bot.on("message", (msg) => {
     }
 
     if (text === "Назад") {
-      sendEmployeeMenu(chatId);
+      sendEmployeeMenu(chatId, session);
       return;
     }
   }
 
-  if (existingOwner) {
+  if (existingOwner && session.role !== "owner_menu") {
     if (text === "В меню") {
-      bot.sendMessage(chatId, "Раздел владельца:", OWNER_MENU);
+      sendOwnerMenu(chatId, session);
       return;
     }
 
@@ -1070,41 +1151,6 @@ bot.on("message", (msg) => {
       bot.sendMessage(chatId, `Расписание смен:\n${summary}`, OWNER_MENU);
       return;
     }
-  }
-
-  if (text === "Я владелец") {
-    session.role = "owner";
-    session.step = "company";
-    session.data = {};
-    bot.sendMessage(chatId, "Введите название компании:");
-    return;
-  }
-
-  if (text === "Я сотрудник") {
-    session.role = "employee";
-    session.step = "invite";
-    session.data = {};
-    bot.sendMessage(chatId, "Введите инвайт-код компании:");
-    return;
-  }
-
-  if (text === "Вход") {
-    const employee = findEmployeeByTelegramId(data, telegramId);
-    if (employee) {
-      sendEmployeeMenu(chatId);
-      return;
-    }
-    const owner = findOwnerByTelegramId(data, telegramId);
-    if (owner) {
-      bot.sendMessage(chatId, "Раздел владельца:", OWNER_MENU);
-      return;
-    }
-
-    session.role = "login";
-    session.step = "login";
-    session.data = {};
-    bot.sendMessage(chatId, "Введите логин владельца:");
-    return;
   }
 
   if (session.role === "owner") {
@@ -1149,13 +1195,14 @@ bot.on("message", (msg) => {
         chatId,
         `Регистрация завершена!\nИнвайт-код: ${company.inviteCode}\nЛогин: ${session.data.login}`
       );
-      bot.sendMessage(chatId, "Раздел владельца:", OWNER_MENU);
-      resetSession(telegramId);
+      session.step = null;
+      session.data = {};
+      sendOwnerMenu(chatId, session);
       return;
     }
   }
 
-  if (session.role === "login") {
+  if (session.role === "login_owner") {
     if (session.step === "login") {
       session.data.login = text;
       session.step = "password";
@@ -1184,8 +1231,9 @@ bot.on("message", (msg) => {
         chatId,
         `Вход выполнен!\nКомпания: ${companyName}\nИнвайт-код: ${inviteCode}`
       );
-      bot.sendMessage(chatId, "Раздел владельца:", OWNER_MENU);
-      resetSession(telegramId);
+      session.step = null;
+      session.data = {};
+      sendOwnerMenu(chatId, session);
       return;
     }
   }
@@ -1217,8 +1265,9 @@ bot.on("message", (msg) => {
         return draft;
       });
       bot.sendMessage(chatId, "Вы успешно зарегистрированы!");
-      resetSession(telegramId);
-      sendEmployeeMenu(chatId);
+      session.step = null;
+      session.data = {};
+      sendEmployeeMenu(chatId, session);
       return;
     }
   }
