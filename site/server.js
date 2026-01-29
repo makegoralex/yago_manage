@@ -680,7 +680,19 @@ const buildRecipeTree = (recipes, parentId = null) =>
       children: buildRecipeTree(recipes, item.id),
     }));
 
-const renderRecipeTree = (nodes) => {
+const collectRecipeTreeIds = (recipes, targetId) => {
+  const toDelete = new Set();
+  const addChildren = (id) => {
+    toDelete.add(id);
+    recipes
+      .filter((item) => item.parentId === id)
+      .forEach((child) => addChildren(child.id));
+  };
+  addChildren(targetId);
+  return toDelete;
+};
+
+const renderRecipeTree = (nodes, ownerId) => {
   if (!nodes.length) {
     return "<p>Рецепты пока не добавлены.</p>";
   }
@@ -690,7 +702,7 @@ const renderRecipeTree = (nodes) => {
         (item) =>
           `<li><strong>${item.name}</strong> (${
             item.type === "category" ? "Категория" : "Рецепт"
-          }) <a href="/owner/${item.ownerId}/recipes/edit?id=${item.id}">Редактировать</a>${
+          }) <a href="/owner/${item.ownerId}/recipes/edit?id=${item.id}">Редактировать</a> <form method="POST" action="/owner/${ownerId}/recipes/delete" style="display:inline;"><input type="hidden" name="id" value="${item.id}" /><button type="submit" class="button danger">Удалить</button></form>${
             item.children.length ? renderNodes(item.children) : ""
           }</li>`
       )
@@ -775,7 +787,7 @@ const renderRecipesPage = (owner, company, recipes, error) =>
       <h1>Рецепты компании ${company.name}</h1>
       ${renderRecipeForm(owner, recipes, error)}
       <h2>Дерево рецептов</h2>
-      ${renderRecipeTree(buildRecipeTree(recipes))}
+      ${renderRecipeTree(buildRecipeTree(recipes), owner.id)}
     </div>`
   );
 
@@ -1322,6 +1334,29 @@ const server = http.createServer((req, res) => {
     }
 
     parseBody(req, (payload) => {
+      if (action === "delete") {
+        const targetId = payload.id;
+        const target = data.recipes.find(
+          (item) => item.id === targetId && item.companyId === company.id
+        );
+        if (!target) {
+          const recipes = data.recipes
+            .filter((item) => item.companyId === company.id)
+            .map((item) => ({ ...item, ownerId: owner.id }));
+          res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(renderRecipesPage(owner, company, recipes, "Рецепт не найден."));
+          return;
+        }
+        updateData((draft) => {
+          const idsToDelete = collectRecipeTreeIds(draft.recipes, targetId);
+          draft.recipes = draft.recipes.filter((item) => !idsToDelete.has(item.id));
+          return draft;
+        });
+        res.writeHead(302, { Location: `/owner/${owner.id}/recipes` });
+        res.end();
+        return;
+      }
+
       const name = (payload.name || "").trim();
       const type = payload.type === "recipe" ? "recipe" : "category";
       const description = (payload.description || "").trim();
