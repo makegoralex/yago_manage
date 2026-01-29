@@ -35,34 +35,115 @@ const renderLayout = (title, body) => `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title}</title>
   <style>
-    body { font-family: Arial, sans-serif; background: #f5f6fa; margin: 0; padding: 40px; }
-    .card { max-width: 520px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
-    h1 { margin-top: 0; font-size: 22px; }
+    :root {
+      color-scheme: light;
+      --bg: #f3f5fb;
+      --card: #ffffff;
+      --text: #1f2a37;
+      --muted: #6b7280;
+      --primary: #2f80ed;
+      --primary-weak: #eef2ff;
+      --border: #e5e9f2;
+      --danger: #e17055;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+      background: var(--bg);
+      margin: 0;
+      padding: 32px 20px 60px;
+      color: var(--text);
+    }
+    a { color: inherit; }
+    .page { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    .card {
+      background: var(--card);
+      padding: 28px;
+      border-radius: 16px;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+      width: 100%;
+    }
+    .card--narrow { max-width: 520px; margin: 0 auto; }
+    .card h1 { margin-top: 0; font-size: 24px; }
+    h2 { margin-top: 24px; font-size: 18px; }
     label { display: block; margin-top: 12px; font-weight: 600; }
-    input { width: 100%; padding: 10px 12px; margin-top: 6px; border-radius: 8px; border: 1px solid #dcdde1; }
-    button { margin-top: 16px; padding: 10px 16px; border: none; border-radius: 8px; background: #2f80ed; color: #fff; font-weight: 600; cursor: pointer; }
+    input,
+    textarea,
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      margin-top: 6px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+      font-size: 14px;
+    }
+    button,
+    .button {
+      margin-top: 16px;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 10px;
+      background: var(--primary);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 14px;
+    }
+    .button.secondary { background: var(--primary-weak); color: #1d4ed8; }
+    .button.ghost { background: #f1f5f9; color: #334155; }
+    .button.danger { background: var(--danger); }
+    .button + .button { margin-left: 8px; }
     .error { color: #d63031; margin-top: 12px; }
     ul { padding-left: 18px; }
-    .muted { color: #636e72; font-size: 14px; }
+    .muted { color: var(--muted); font-size: 14px; }
     table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eceff4; }
-    textarea { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #dcdde1; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    textarea { resize: vertical; }
     .grid { display: grid; gap: 12px; }
-    .row { display: flex; gap: 12px; }
-    .row > * { flex: 1; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .row > * { flex: 1; min-width: 160px; }
     .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #f1f2f6; font-size: 12px; }
-    .actions { display: flex; gap: 8px; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .page-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+    .menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 16px 0 8px; }
+    .menu-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      text-decoration: none;
+      background: #f8fafc;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .menu-card:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08); }
+    .menu-card strong { display: block; margin-bottom: 6px; }
   </style>
 </head>
 <body>
-  ${body}
+  <div class="page">
+    ${body}
+  </div>
 </body>
 </html>`;
+
+const renderOwnerNav = (owner, { showBack = true } = {}) => `
+  <div class="page-nav">
+    <div class="actions">
+      ${showBack ? `<a class="button secondary" href="/owner/${owner.id}">← Назад</a>` : ""}
+    </div>
+    <a class="button ghost" href="/">Выйти</a>
+  </div>
+`;
 
 const renderLogin = (error) =>
   renderLayout(
     "Вход владельца",
-    `<div class="card">
+    `<div class="card card--narrow">
       <h1>Вход владельца</h1>
       <p class="muted">Введите логин и пароль, полученные в Telegram-боте.</p>
       <form method="POST" action="/login">
@@ -80,11 +161,23 @@ const renderDashboard = (company, employees, owner) =>
   renderLayout(
     "Кабинет владельца",
     `<div class="card">
+      ${renderOwnerNav(owner, { showBack: false })}
       <h1>Организация: ${company.name}</h1>
       <p class="muted">Инвайт-код: ${company.inviteCode}</p>
-      <p><a href="/owner/${owner.id}/recipes">Управление рецептами</a></p>
-      <p><a href="/owner/${owner.id}/schedule">График работы и смены</a></p>
-      <p><a href="/owner/${owner.id}/reports">Контроль работы</a></p>
+      <div class="menu-grid">
+        <a class="menu-card" href="/owner/${owner.id}/recipes">
+          <strong>Управление рецептами</strong>
+          <span class="muted">Структура меню и описания блюд.</span>
+        </a>
+        <a class="menu-card" href="/owner/${owner.id}/schedule">
+          <strong>График работы и смены</strong>
+          <span class="muted">Настройка расписания и подтверждение смен.</span>
+        </a>
+        <a class="menu-card" href="/owner/${owner.id}/reports">
+          <strong>Контроль работы</strong>
+          <span class="muted">Шаблоны и отчётность сотрудников.</span>
+        </a>
+      </div>
       <h2>Сотрудники</h2>
       ${
         employees.length
@@ -211,12 +304,12 @@ const renderPendingBookings = (owner, bookings, employees, schedule) => {
             <form method="POST" action="/owner/${owner.id}/schedule/booking">
               <input type="hidden" name="bookingId" value="${booking.id}" />
               <input type="hidden" name="action" value="approve" />
-              <button type="submit">Подтвердить</button>
+              <button type="submit" class="button">Подтвердить</button>
             </form>
             <form method="POST" action="/owner/${owner.id}/schedule/booking">
               <input type="hidden" name="bookingId" value="${booking.id}" />
               <input type="hidden" name="action" value="decline" />
-              <button type="submit" style="background:#e17055;">Отклонить</button>
+              <button type="submit" class="button danger">Отклонить</button>
             </form>
           </td>
         </tr>
@@ -288,6 +381,7 @@ const renderSchedulePage = (owner, company, employees, schedule, bookings, pendi
   renderLayout(
     "График работы",
     `<div class="card">
+      ${renderOwnerNav(owner)}
       <h1>График работы: ${company.name}</h1>
       ${renderScheduleForm(owner, schedule, error)}
       <h2>Текущее расписание</h2>
@@ -296,7 +390,6 @@ const renderSchedulePage = (owner, company, employees, schedule, bookings, pendi
       ${renderScheduleRoster(bookings, employees, schedule)}
       <h2>Заявки на подтверждение</h2>
       ${renderPendingBookings(owner, pendingBookings, employees, schedule)}
-      <p class="muted"><a href="/">Выйти</a></p>
     </div>`
   );
 
@@ -381,6 +474,7 @@ const renderReportsPage = (owner, company, employees, reportConfig, submissions,
   return renderLayout(
     "Контроль работы",
     `<div class="card">
+      ${renderOwnerNav(owner)}
       <h1>Контроль работы: ${company.name}</h1>
       ${error ? `<div class="error">${error}</div>` : ""}
       <h2>Шаблоны отчётов</h2>
@@ -416,7 +510,6 @@ const renderReportsPage = (owner, company, employees, reportConfig, submissions,
       ${renderReportRules(reportConfig.rules, reportConfig.templates)}
       <h2>Отчёты за 14 дней</h2>
       ${renderReportSubmissions(submissions, employees, reportConfig.templates)}
-      <p class="muted"><a href="/">Выйти</a></p>
     </div>`
   );
 };
@@ -489,6 +582,7 @@ const renderRecipeEdit = (owner, recipe, categories, error) => {
   return renderLayout(
     "Редактирование рецепта",
     `<div class="card">
+      ${renderOwnerNav(owner)}
       <h1>Редактирование</h1>
       ${error ? `<div class="error">${error}</div>` : ""}
       <form method="POST" action="/owner/${owner.id}/recipes/edit">
@@ -519,11 +613,11 @@ const renderRecipesPage = (owner, company, recipes, error) =>
   renderLayout(
     "Рецепты",
     `<div class="card">
+      ${renderOwnerNav(owner)}
       <h1>Рецепты компании ${company.name}</h1>
       ${renderRecipeForm(owner, recipes, error)}
       <h2>Дерево рецептов</h2>
       ${renderRecipeTree(buildRecipeTree(recipes))}
-      <p class="muted"><a href="/">Выйти</a></p>
     </div>`
   );
 
@@ -647,6 +741,13 @@ const server = http.createServer((req, res) => {
     if (!company) {
       res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderLogin("Компания не найдена."));
+      return;
+    }
+
+    if (!section) {
+      const employees = data.employees.filter((employee) => employee.companyId === company.id);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(renderDashboard(company, employees, owner));
       return;
     }
 
