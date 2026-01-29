@@ -167,12 +167,26 @@ const renderCompanyForm = (owner, company, error) => `
     <input type="text" name="companyName" value="${company.name || ""}" required />
     <label>Инвайт-код</label>
     <input type="text" name="inviteCode" value="${company.inviteCode || ""}" required />
+    <label>Ставка (₽/час)</label>
+    <input type="number" name="hourlyRate" min="0" step="50" value="${company.hourlyRate ?? 0}" required />
     <p class="muted" style="margin-top:6px;">Инвайт-код нужен сотрудникам для подключения через бота.</p>
     <button type="submit">Сохранить организацию</button>
   </form>
 `;
 
-const renderEmployeeOverview = (owner, employees, bookings) => {
+const parseShiftHours = (shiftId) => {
+  if (!shiftId) return 0;
+  const match = shiftId.match(/^\d-(\d{2}):(\d{2})-(\d{2}):(\d{2})-/);
+  if (!match) return 0;
+  const [, startH, startM, endH, endM] = match.map(Number);
+  const startMinutes = startH * 60 + startM;
+  const endMinutes = endH * 60 + endM;
+  if (Number.isNaN(startMinutes) || Number.isNaN(endMinutes)) return 0;
+  const minutes = Math.max(0, endMinutes - startMinutes);
+  return minutes / 60;
+};
+
+const renderEmployeeOverview = (owner, employees, bookings, hourlyRate) => {
   if (!employees.length) {
     return "<p>Сотрудников пока нет.</p>";
   }
@@ -181,6 +195,10 @@ const renderEmployeeOverview = (owner, employees, bookings) => {
       const employeeBookings = bookings.filter((booking) => booking.employeeId === employee.id);
       const approved = employeeBookings.filter((booking) => booking.status === "approved").length;
       const pending = employeeBookings.filter((booking) => booking.status === "pending").length;
+      const hoursWorked = employeeBookings
+        .filter((booking) => booking.status === "approved")
+        .reduce((total, booking) => total + parseShiftHours(booking.shiftId), 0);
+      const earned = Math.round(hoursWorked * hourlyRate);
       const status = employee.active === false ? "Уволен" : "Активен";
       const statusClass = employee.active === false ? "warning" : "success";
       const toggleLabel = employee.active === false ? "Вернуть" : "Уволить";
@@ -191,6 +209,7 @@ const renderEmployeeOverview = (owner, employees, bookings) => {
           <td>${employeeBookings.length}</td>
           <td>${approved}</td>
           <td>${pending}</td>
+          <td>${earned} ₽</td>
           <td>
             <form method="POST" action="/owner/${owner.id}/employees/toggle">
               <input type="hidden" name="employeeId" value="${employee.id}" />
@@ -210,12 +229,13 @@ const renderEmployeeOverview = (owner, employees, bookings) => {
           <th>Смен всего</th>
           <th>Подтверждённые</th>
           <th>В ожидании</th>
+          <th>Заработано</th>
           <th>Действия</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
-    <p class="muted" style="margin-top:8px;">Смены считаются по заявкам в графике. Статистика будет расширяться.</p>
+    <p class="muted" style="margin-top:8px;">Заработок считается по подтверждённым сменам и ставке организации. Статистика будет расширяться.</p>
   `;
 };
 
@@ -242,7 +262,7 @@ const renderDashboard = (company, employees, owner, bookings, companyError) =>
       </div>
       ${renderCompanyForm(owner, company, companyError)}
       <h2>Сотрудники</h2>
-      ${renderEmployeeOverview(owner, employees, bookings)}
+      ${renderEmployeeOverview(owner, employees, bookings, company.hourlyRate ?? 0)}
     </div>`
   );
 
@@ -945,7 +965,8 @@ const server = http.createServer((req, res) => {
       parseBody(req, (payload) => {
         const name = (payload.companyName || "").trim();
         const inviteCode = (payload.inviteCode || "").trim();
-        if (!name || !inviteCode) {
+        const hourlyRate = Number.parseFloat(payload.hourlyRate);
+        if (!name || !inviteCode || Number.isNaN(hourlyRate) || hourlyRate < 0) {
           const employees = data.employees.filter((employee) => employee.companyId === company.id);
           const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
           res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
@@ -955,7 +976,7 @@ const server = http.createServer((req, res) => {
               employees,
               owner,
               companyBookings,
-              "Заполните название и инвайт-код."
+              "Заполните название, инвайт-код и ставку."
             )
           );
           return;
@@ -965,6 +986,7 @@ const server = http.createServer((req, res) => {
           if (target) {
             target.name = name;
             target.inviteCode = inviteCode;
+            target.hourlyRate = hourlyRate;
           }
           return draft;
         });
