@@ -515,7 +515,7 @@ const renderSchedulePage = (owner, company, employees, schedule, bookings, pendi
     </div>`
   );
 
-const renderReportTemplates = (templates) => {
+const renderReportTemplates = (owner, templates) => {
   if (!templates.length) {
     return "<p class=\"muted\">Шаблоны пока не добавлены.</p>";
   }
@@ -524,9 +524,31 @@ const renderReportTemplates = (templates) => {
       (template) =>
         `<li><strong>${template.name}</strong> (${template.requirePhoto ? "фото" : "без фото"})<br/><span class="muted">Чек-лист: ${template.items.join(
           ", "
-        )}</span></li>`
+        )}</span><div class="actions" style="margin-top:8px;"><a class="button secondary" href="/owner/${owner.id}/reports/templates/edit?id=${template.id}">Редактировать</a><form method="POST" action="/owner/${owner.id}/reports/templates/delete"><input type="hidden" name="templateId" value="${template.id}" /><button type="submit" class="button danger">Удалить</button></form></div></li>`
     )
     .join("")}</ul>`;
+};
+
+const renderReportTemplateEdit = (owner, company, template, error) => {
+  const itemsValue = (template.items || []).join(", ");
+  return renderLayout(
+    "Редактирование шаблона",
+    `<div class="card">
+      ${renderOwnerNav(owner)}
+      <h1>Редактирование шаблона: ${company.name}</h1>
+      ${error ? `<div class="error">${error}</div>` : ""}
+      <form method="POST" action="/owner/${owner.id}/reports/templates/edit">
+        <input type="hidden" name="templateId" value="${template.id}" />
+        <label>Название шаблона</label>
+        <input type="text" name="templateName" value="${template.name}" required />
+        <label>Чек-лист (через запятую)</label>
+        <input type="text" name="templateItems" value="${itemsValue}" required />
+        <label><input type="checkbox" name="templatePhoto" value="yes" ${template.requirePhoto ? "checked" : ""} /> Требуется фото</label>
+        <button type="submit">Сохранить изменения</button>
+      </form>
+      <p class="muted"><a href="/owner/${owner.id}/reports">Назад к контролю</a></p>
+    </div>`
+  );
 };
 
 const renderReportRules = (rules, templates) => {
@@ -617,7 +639,7 @@ const renderReportsPage = (owner, company, employees, reportConfig, submissions,
         <label><input type="checkbox" name="templatePhoto" value="yes" /> Требуется фото</label>
         <button type="submit">Добавить шаблон</button>
       </form>
-      ${renderReportTemplates(reportConfig.templates)}
+      ${renderReportTemplates(owner, reportConfig.templates)}
       <h2>Правила отчётности</h2>
       <form method="POST" action="/owner/${owner.id}/reports/rules">
         <label>Название правила</label>
@@ -900,6 +922,26 @@ const server = http.createServer((req, res) => {
     }
 
     if (section === "reports") {
+      if (url.pathname.endsWith("/templates/edit")) {
+        const templateId = url.searchParams.get("id");
+        const reportConfig = normalizeReportConfig(company);
+        const template = reportConfig.templates.find((item) => item.id === templateId);
+        if (!template) {
+          const employees = data.employees.filter((employee) => employee.companyId === company.id);
+          const cutoff = new Date();
+          cutoff.setDate(cutoff.getDate() - 14);
+          const submissions = data.reportSubmissions.filter(
+            (submission) =>
+              submission.companyId === company.id && new Date(submission.date) >= cutoff
+          );
+          res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(renderReportsPage(owner, company, employees, reportConfig, submissions, "Шаблон не найден."));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderReportTemplateEdit(owner, company, template));
+        return;
+      }
       const reportConfig = normalizeReportConfig(company);
       const employees = data.employees.filter((employee) => employee.companyId === company.id);
       const cutoff = new Date();
@@ -1144,6 +1186,57 @@ const server = http.createServer((req, res) => {
           res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
           res.end(renderReportsPage(owner, company, employees, reportConfig, submissions, message));
         };
+
+        if (action === "templates" && url.pathname.endsWith("/edit")) {
+          const templateId = payload.templateId;
+          const name = (payload.templateName || "").trim();
+          const items = (payload.templateItems || "")
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+          const requirePhoto = payload.templatePhoto === "yes";
+          if (!templateId || !name || !items.length) {
+            renderError("Заполните название и чек-лист.");
+            return;
+          }
+          updateData((draft) => {
+            const targetCompany = draft.companies.find((item) => item.id === company.id);
+            if (targetCompany) {
+              const nextConfig = normalizeReportConfig(targetCompany);
+              const targetTemplate = nextConfig.templates.find((item) => item.id === templateId);
+              if (targetTemplate) {
+                targetTemplate.name = name;
+                targetTemplate.items = items;
+                targetTemplate.requirePhoto = requirePhoto;
+                targetCompany.reportConfig = nextConfig;
+              }
+            }
+            return draft;
+          });
+          res.writeHead(302, { Location: `/owner/${owner.id}/reports` });
+          res.end();
+          return;
+        }
+
+        if (action === "templates" && url.pathname.endsWith("/delete")) {
+          const templateId = payload.templateId;
+          if (!templateId) {
+            renderError("Выберите шаблон для удаления.");
+            return;
+          }
+          updateData((draft) => {
+            const targetCompany = draft.companies.find((item) => item.id === company.id);
+            if (targetCompany) {
+              const nextConfig = normalizeReportConfig(targetCompany);
+              nextConfig.templates = nextConfig.templates.filter((item) => item.id !== templateId);
+              targetCompany.reportConfig = nextConfig;
+            }
+            return draft;
+          });
+          res.writeHead(302, { Location: `/owner/${owner.id}/reports` });
+          res.end();
+          return;
+        }
 
         if (action === "templates") {
           const name = (payload.templateName || "").trim();
