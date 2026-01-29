@@ -35,34 +35,117 @@ const renderLayout = (title, body) => `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title}</title>
   <style>
-    body { font-family: Arial, sans-serif; background: #f5f6fa; margin: 0; padding: 40px; }
-    .card { max-width: 520px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
-    h1 { margin-top: 0; font-size: 22px; }
+    :root {
+      color-scheme: light;
+      --bg: #f3f5fb;
+      --card: #ffffff;
+      --text: #1f2a37;
+      --muted: #6b7280;
+      --primary: #2f80ed;
+      --primary-weak: #eef2ff;
+      --border: #e5e9f2;
+      --danger: #e17055;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+      background: var(--bg);
+      margin: 0;
+      padding: 32px 20px 60px;
+      color: var(--text);
+    }
+    a { color: inherit; }
+    .page { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    .card {
+      background: var(--card);
+      padding: 28px;
+      border-radius: 16px;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+      width: 100%;
+    }
+    .card--narrow { max-width: 520px; margin: 0 auto; }
+    .card h1 { margin-top: 0; font-size: 24px; }
+    h2 { margin-top: 24px; font-size: 18px; }
     label { display: block; margin-top: 12px; font-weight: 600; }
-    input { width: 100%; padding: 10px 12px; margin-top: 6px; border-radius: 8px; border: 1px solid #dcdde1; }
-    button { margin-top: 16px; padding: 10px 16px; border: none; border-radius: 8px; background: #2f80ed; color: #fff; font-weight: 600; cursor: pointer; }
+    input,
+    textarea,
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      margin-top: 6px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+      font-size: 14px;
+    }
+    button,
+    .button {
+      margin-top: 16px;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 10px;
+      background: var(--primary);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 14px;
+    }
+    .button.secondary { background: var(--primary-weak); color: #1d4ed8; }
+    .button.ghost { background: #f1f5f9; color: #334155; }
+    .button.danger { background: var(--danger); }
+    .button + .button { margin-left: 8px; }
     .error { color: #d63031; margin-top: 12px; }
     ul { padding-left: 18px; }
-    .muted { color: #636e72; font-size: 14px; }
+    .muted { color: var(--muted); font-size: 14px; }
     table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eceff4; }
-    textarea { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #dcdde1; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    textarea { resize: vertical; }
     .grid { display: grid; gap: 12px; }
-    .row { display: flex; gap: 12px; }
-    .row > * { flex: 1; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .row > * { flex: 1; min-width: 160px; }
     .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #f1f2f6; font-size: 12px; }
-    .actions { display: flex; gap: 8px; }
+    .pill.success { background: #dcfce7; color: #166534; }
+    .pill.warning { background: #fee2e2; color: #991b1b; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .page-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+    .menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 16px 0 8px; }
+    .menu-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      text-decoration: none;
+      background: #f8fafc;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .menu-card:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08); }
+    .menu-card strong { display: block; margin-bottom: 6px; }
   </style>
 </head>
 <body>
-  ${body}
+  <div class="page">
+    ${body}
+  </div>
 </body>
 </html>`;
+
+const renderOwnerNav = (owner, { showBack = true } = {}) => `
+  <div class="page-nav">
+    <div class="actions">
+      ${showBack ? `<a class="button secondary" href="/owner/${owner.id}">← Назад</a>` : ""}
+    </div>
+    <a class="button ghost" href="/">Выйти</a>
+  </div>
+`;
 
 const renderLogin = (error) =>
   renderLayout(
     "Вход владельца",
-    `<div class="card">
+    `<div class="card card--narrow">
       <h1>Вход владельца</h1>
       <p class="muted">Введите логин и пароль, полученные в Telegram-боте.</p>
       <form method="POST" action="/login">
@@ -76,21 +159,110 @@ const renderLogin = (error) =>
     </div>`
   );
 
-const renderDashboard = (company, employees, owner) =>
+const renderCompanyForm = (owner, company, error) => `
+  <h2>Организация</h2>
+  ${error ? `<div class="error">${error}</div>` : ""}
+  <form method="POST" action="/owner/${owner.id}/company">
+    <label>Название</label>
+    <input type="text" name="companyName" value="${company.name || ""}" required />
+    <label>Инвайт-код</label>
+    <input type="text" name="inviteCode" value="${company.inviteCode || ""}" required />
+    <label>Ставка (₽/час)</label>
+    <input type="number" name="hourlyRate" min="0" step="50" value="${company.hourlyRate ?? 0}" required />
+    <p class="muted" style="margin-top:6px;">Инвайт-код нужен сотрудникам для подключения через бота.</p>
+    <button type="submit">Сохранить организацию</button>
+  </form>
+`;
+
+const parseShiftHours = (shiftId) => {
+  if (!shiftId) return 0;
+  const match = shiftId.match(/^\d-(\d{2}):(\d{2})-(\d{2}):(\d{2})-/);
+  if (!match) return 0;
+  const [, startH, startM, endH, endM] = match.map(Number);
+  const startMinutes = startH * 60 + startM;
+  const endMinutes = endH * 60 + endM;
+  if (Number.isNaN(startMinutes) || Number.isNaN(endMinutes)) return 0;
+  const minutes = Math.max(0, endMinutes - startMinutes);
+  return minutes / 60;
+};
+
+const renderEmployeeOverview = (owner, employees, bookings, hourlyRate) => {
+  if (!employees.length) {
+    return "<p>Сотрудников пока нет.</p>";
+  }
+  const rows = employees
+    .map((employee) => {
+      const employeeBookings = bookings.filter((booking) => booking.employeeId === employee.id);
+      const approved = employeeBookings.filter((booking) => booking.status === "approved").length;
+      const pending = employeeBookings.filter((booking) => booking.status === "pending").length;
+      const hoursWorked = employeeBookings
+        .filter((booking) => booking.status === "approved")
+        .reduce((total, booking) => total + parseShiftHours(booking.shiftId), 0);
+      const earned = Math.round(hoursWorked * hourlyRate);
+      const status = employee.active === false ? "Уволен" : "Активен";
+      const statusClass = employee.active === false ? "warning" : "success";
+      const toggleLabel = employee.active === false ? "Вернуть" : "Уволить";
+      return `
+        <tr>
+          <td>${employee.name}</td>
+          <td><span class="pill ${statusClass}">${status}</span></td>
+          <td>${employeeBookings.length}</td>
+          <td>${approved}</td>
+          <td>${pending}</td>
+          <td>${earned} ₽</td>
+          <td>
+            <form method="POST" action="/owner/${owner.id}/employees/toggle">
+              <input type="hidden" name="employeeId" value="${employee.id}" />
+              <button type="submit" class="button secondary">${toggleLabel}</button>
+            </form>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Сотрудник</th>
+          <th>Статус</th>
+          <th>Смен всего</th>
+          <th>Подтверждённые</th>
+          <th>В ожидании</th>
+          <th>Заработано</th>
+          <th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="muted" style="margin-top:8px;">Заработок считается по подтверждённым сменам и ставке организации. Статистика будет расширяться.</p>
+  `;
+};
+
+const renderDashboard = (company, employees, owner, bookings, companyError) =>
   renderLayout(
     "Кабинет владельца",
     `<div class="card">
+      ${renderOwnerNav(owner, { showBack: false })}
       <h1>Организация: ${company.name}</h1>
       <p class="muted">Инвайт-код: ${company.inviteCode}</p>
-      <p><a href="/owner/${owner.id}/recipes">Управление рецептами</a></p>
-      <p><a href="/owner/${owner.id}/schedule">График работы и смены</a></p>
-      <p><a href="/owner/${owner.id}/reports">Контроль работы</a></p>
+      <div class="menu-grid">
+        <a class="menu-card" href="/owner/${owner.id}/recipes">
+          <strong>Управление рецептами</strong>
+          <span class="muted">Структура меню и описания блюд.</span>
+        </a>
+        <a class="menu-card" href="/owner/${owner.id}/schedule">
+          <strong>График работы и смены</strong>
+          <span class="muted">Настройка расписания и подтверждение смен.</span>
+        </a>
+        <a class="menu-card" href="/owner/${owner.id}/reports">
+          <strong>Контроль работы</strong>
+          <span class="muted">Шаблоны и отчётность сотрудников.</span>
+        </a>
+      </div>
+      ${renderCompanyForm(owner, company, companyError)}
       <h2>Сотрудники</h2>
-      ${
-        employees.length
-          ? `<ul>${employees.map((emp) => `<li>${emp.name}</li>`).join("")}</ul>`
-          : "<p>Сотрудников пока нет.</p>"
-      }
+      ${renderEmployeeOverview(owner, employees, bookings, company.hourlyRate ?? 0)}
     </div>`
   );
 
@@ -154,6 +326,7 @@ const formatShiftInputValue = (day) =>
 
 const renderScheduleForm = (owner, schedule, error) => `
   <h2>Настройка графика</h2>
+  <p class="muted">Сначала настройте один день, затем примените эти значения к другим дням (например, ко всем будням).</p>
   ${error ? `<div class="error">${error}</div>` : ""}
   <form method="POST" action="/owner/${owner.id}/schedule">
     <label>Режим бронирования</label>
@@ -166,6 +339,28 @@ const renderScheduleForm = (owner, schedule, error) => `
       <option value="weekly" ${schedule.bookingPeriod === "weekly" ? "selected" : ""}>Раз в неделю</option>
       <option value="monthly" ${schedule.bookingPeriod === "monthly" ? "selected" : ""}>Раз в месяц</option>
     </select>
+    <div class="card" style="background:#f8fafc;border:1px solid var(--border);margin-top:16px;padding:16px;">
+      <strong>Быстрое применение</strong>
+      <p class="muted" style="margin-top:6px;">Выберите день-источник и отметьте дни, куда скопировать время и смены.</p>
+      <div class="row">
+        <div>
+          <label>День-источник</label>
+          <select id="copy-source">
+            ${DAYS.map((day) => `<option value="${day.index}">${day.label}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label>Скопировать в дни</label>
+          <div class="row">
+            ${DAYS.map(
+              (day) =>
+                `<label class="muted" style="font-weight:500;"><input type="checkbox" data-copy-target="${day.index}" /> ${day.label}</label>`
+            ).join("")}
+          </div>
+        </div>
+      </div>
+      <button type="button" class="button secondary" id="copy-apply">Применить ко выбранным дням</button>
+    </div>
     <h3>Дни недели</h3>
     ${DAYS.map((dayMeta) => {
       const day = schedule.days.find((item) => item.dayIndex === dayMeta.index);
@@ -175,20 +370,40 @@ const renderScheduleForm = (owner, schedule, error) => `
           <div class="row">
             <div>
               <label>Открытие</label>
-              <input type="text" name="open_${dayMeta.index}" value="${day.open || ""}" placeholder="08:00" />
+              <input type="time" name="open_${dayMeta.index}" value="${day.open || ""}" placeholder="08:00" />
             </div>
             <div>
               <label>Закрытие</label>
-              <input type="text" name="close_${dayMeta.index}" value="${day.close || ""}" placeholder="21:00" />
+              <input type="time" name="close_${dayMeta.index}" value="${day.close || ""}" placeholder="21:00" />
             </div>
           </div>
           <label>Смены (формат: 08:00-15:00:2, 14:00-21:00:1)</label>
           <input type="text" name="shifts_${dayMeta.index}" value="${formatShiftInputValue(day)}" />
+          <p class="muted" style="margin-top:6px;">Каждая смена: время начала-окончания и количество мест через двоеточие.</p>
         </div>
       `;
     }).join("")}
     <button type="submit">Сохранить график</button>
   </form>
+  <script>
+    (function () {
+      const applyButton = document.getElementById("copy-apply");
+      if (!applyButton) return;
+      applyButton.addEventListener("click", () => {
+        const sourceIndex = document.getElementById("copy-source").value;
+        const sourceOpen = document.querySelector(\`input[name="open_\${sourceIndex}"]\`).value;
+        const sourceClose = document.querySelector(\`input[name="close_\${sourceIndex}"]\`).value;
+        const sourceShifts = document.querySelector(\`input[name="shifts_\${sourceIndex}"]\`).value;
+        document.querySelectorAll("[data-copy-target]").forEach((checkbox) => {
+          if (!checkbox.checked) return;
+          const targetIndex = checkbox.getAttribute("data-copy-target");
+          document.querySelector(\`input[name="open_\${targetIndex}"]\`).value = sourceOpen;
+          document.querySelector(\`input[name="close_\${targetIndex}"]\`).value = sourceClose;
+          document.querySelector(\`input[name="shifts_\${targetIndex}"]\`).value = sourceShifts;
+        });
+      });
+    })();
+  </script>
 `;
 
 const renderPendingBookings = (owner, bookings, employees, schedule) => {
@@ -211,12 +426,12 @@ const renderPendingBookings = (owner, bookings, employees, schedule) => {
             <form method="POST" action="/owner/${owner.id}/schedule/booking">
               <input type="hidden" name="bookingId" value="${booking.id}" />
               <input type="hidden" name="action" value="approve" />
-              <button type="submit">Подтвердить</button>
+              <button type="submit" class="button">Подтвердить</button>
             </form>
             <form method="POST" action="/owner/${owner.id}/schedule/booking">
               <input type="hidden" name="bookingId" value="${booking.id}" />
               <input type="hidden" name="action" value="decline" />
-              <button type="submit" style="background:#e17055;">Отклонить</button>
+              <button type="submit" class="button danger">Отклонить</button>
             </form>
           </td>
         </tr>
@@ -288,6 +503,7 @@ const renderSchedulePage = (owner, company, employees, schedule, bookings, pendi
   renderLayout(
     "График работы",
     `<div class="card">
+      ${renderOwnerNav(owner)}
       <h1>График работы: ${company.name}</h1>
       ${renderScheduleForm(owner, schedule, error)}
       <h2>Текущее расписание</h2>
@@ -296,7 +512,6 @@ const renderSchedulePage = (owner, company, employees, schedule, bookings, pendi
       ${renderScheduleRoster(bookings, employees, schedule)}
       <h2>Заявки на подтверждение</h2>
       ${renderPendingBookings(owner, pendingBookings, employees, schedule)}
-      <p class="muted"><a href="/">Выйти</a></p>
     </div>`
   );
 
@@ -381,14 +596,24 @@ const renderReportsPage = (owner, company, employees, reportConfig, submissions,
   return renderLayout(
     "Контроль работы",
     `<div class="card">
+      ${renderOwnerNav(owner)}
       <h1>Контроль работы: ${company.name}</h1>
       ${error ? `<div class="error">${error}</div>` : ""}
+      <div class="card" style="background:#f8fafc;border:1px solid var(--border);margin-top:12px;padding:16px;">
+        <strong>Как настроить контроль</strong>
+        <ol class="muted" style="margin-top:8px;">
+          <li>Создайте шаблон отчёта: список пунктов, по которым сотрудник должен отчитаться.</li>
+          <li>Создайте правило: когда отправлять отчёт (начало/конец/в течение смены).</li>
+          <li>Сотрудник получит напоминание и заполнит отчёт по выбранному шаблону.</li>
+        </ol>
+      </div>
       <h2>Шаблоны отчётов</h2>
       <form method="POST" action="/owner/${owner.id}/reports/templates">
         <label>Название шаблона</label>
         <input type="text" name="templateName" required />
         <label>Чек-лист (через запятую)</label>
         <input type="text" name="templateItems" placeholder="Пришёл вовремя, Одежда, Касса" required />
+        <p class="muted" style="margin-top:6px;">Пример: “Пришёл вовремя, Форма, Чистота рабочей зоны”.</p>
         <label><input type="checkbox" name="templatePhoto" value="yes" /> Требуется фото</label>
         <button type="submit">Добавить шаблон</button>
       </form>
@@ -401,6 +626,7 @@ const renderReportsPage = (owner, company, employees, reportConfig, submissions,
         <select name="ruleTemplate" required>
           ${templateOptions || "<option value=\"\">Нет шаблонов</option>"}
         </select>
+        <p class="muted" style="margin-top:6px;">Выберите, по какому шаблону сотрудник будет отчитываться.</p>
         <label>Когда отправлять</label>
         <select name="ruleTrigger">
           <option value="start">Начало смены</option>
@@ -411,12 +637,15 @@ const renderReportsPage = (owner, company, employees, reportConfig, submissions,
         <input type="number" name="ruleInterval" value="0" min="0" />
         <label>Окно отправки (мин) для периодических</label>
         <input type="number" name="ruleWindow" value="15" min="5" />
+        <p class="muted" style="margin-top:6px;">
+          <strong>Подсказка:</strong> для начала/конца смены укажите смещение (например, 10 — отправить через 10 минут).
+          Для “В течение смены” укажите интервал (например, 120 — каждые 2 часа) и окно (например, 15 минут).
+        </p>
         <button type="submit">Добавить правило</button>
       </form>
       ${renderReportRules(reportConfig.rules, reportConfig.templates)}
       <h2>Отчёты за 14 дней</h2>
       ${renderReportSubmissions(submissions, employees, reportConfig.templates)}
-      <p class="muted"><a href="/">Выйти</a></p>
     </div>`
   );
 };
@@ -489,6 +718,7 @@ const renderRecipeEdit = (owner, recipe, categories, error) => {
   return renderLayout(
     "Редактирование рецепта",
     `<div class="card">
+      ${renderOwnerNav(owner)}
       <h1>Редактирование</h1>
       ${error ? `<div class="error">${error}</div>` : ""}
       <form method="POST" action="/owner/${owner.id}/recipes/edit">
@@ -519,11 +749,11 @@ const renderRecipesPage = (owner, company, recipes, error) =>
   renderLayout(
     "Рецепты",
     `<div class="card">
+      ${renderOwnerNav(owner)}
       <h1>Рецепты компании ${company.name}</h1>
       ${renderRecipeForm(owner, recipes, error)}
       <h2>Дерево рецептов</h2>
       ${renderRecipeTree(buildRecipeTree(recipes))}
-      <p class="muted"><a href="/">Выйти</a></p>
     </div>`
   );
 
@@ -628,7 +858,8 @@ const server = http.createServer((req, res) => {
         (employee) => employee.companyId === company.id
       );
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderDashboard(company, employees, owner));
+      const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+      res.end(renderDashboard(company, employees, owner, companyBookings));
     });
     return;
   }
@@ -647,6 +878,14 @@ const server = http.createServer((req, res) => {
     if (!company) {
       res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderLogin("Компания не найдена."));
+      return;
+    }
+
+    if (!section) {
+      const employees = data.employees.filter((employee) => employee.companyId === company.id);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+      res.end(renderDashboard(company, employees, owner, companyBookings));
       return;
     }
 
@@ -719,6 +958,74 @@ const server = http.createServer((req, res) => {
     if (!company) {
       res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderLogin("Компания не найдена."));
+      return;
+    }
+
+    if (section === "company") {
+      parseBody(req, (payload) => {
+        const name = (payload.companyName || "").trim();
+        const inviteCode = (payload.inviteCode || "").trim();
+        const hourlyRate = Number.parseFloat(payload.hourlyRate);
+        if (!name || !inviteCode || Number.isNaN(hourlyRate) || hourlyRate < 0) {
+          const employees = data.employees.filter((employee) => employee.companyId === company.id);
+          const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(
+            renderDashboard(
+              company,
+              employees,
+              owner,
+              companyBookings,
+              "Заполните название, инвайт-код и ставку."
+            )
+          );
+          return;
+        }
+        updateData((draft) => {
+          const target = draft.companies.find((item) => item.id === company.id);
+          if (target) {
+            target.name = name;
+            target.inviteCode = inviteCode;
+            target.hourlyRate = hourlyRate;
+          }
+          return draft;
+        });
+        res.writeHead(302, { Location: `/owner/${owner.id}` });
+        res.end();
+      });
+      return;
+    }
+
+    if (section === "employees" && action === "toggle") {
+      parseBody(req, (payload) => {
+        const employee = data.employees.find(
+          (item) => item.id === payload.employeeId && item.companyId === company.id
+        );
+        if (!employee) {
+          const employees = data.employees.filter((item) => item.companyId === company.id);
+          const companyBookings = data.bookings.filter((booking) => booking.companyId === company.id);
+          res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(
+            renderDashboard(
+              company,
+              employees,
+              owner,
+              companyBookings,
+              "Сотрудник не найден."
+            )
+          );
+          return;
+        }
+        updateData((draft) => {
+          const target = draft.employees.find((item) => item.id === employee.id);
+          if (target) {
+            target.active = target.active === false;
+          }
+          return draft;
+        });
+        res.writeHead(302, { Location: `/owner/${owner.id}` });
+        res.end();
+      });
       return;
     }
 
